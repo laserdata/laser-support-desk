@@ -21,7 +21,7 @@ import laser_sdk as ls
 
 from . import config as C
 from . import telemetry
-from .core import Desk, connect, is_addressed, setup
+from .core import Desk, connect, embed, embedder_name, is_addressed, setup
 from .llm import choose_llm
 
 
@@ -50,7 +50,7 @@ def triage(desk: Desk):
                 "order": order.group(1) if order else None,
                 "amount_cents": int(round(float(amount.group(1)) * 100)) if amount else None,
                 "summary": text,
-                "reply": "Thanks, I've logged this and passed it to a resolver.",
+                "reply": "Thanks for getting in touch. We're looking into this now and will get back to you shortly.",
             }
             triaged = await desk.think_json(t, (
                 "You are the triage agent on a customer support desk.\n"
@@ -59,7 +59,8 @@ def triage(desk: Desk):
                 "Return JSON with keys: intent (refund, question or complaint), order (the order id "
                 "as a string, or null), amount_cents (integer, or null), summary (one sentence of "
                 "what the customer is asking, in their terms only, nothing from history), "
-                "reply (a short friendly reply saying a resolver will look into it; do not promise "
+                "reply (a short friendly reply saying we are looking into it; write as the support "
+                "team, never mention agents, triage, resolvers or other internal roles; do not promise "
                 "an outcome and do not say what has or has not happened before)."), default)
             await desk.event(t, "intent", text=f"{triaged['intent']}, order {triaged['order']}, "
                                               f"amount {triaged['amount_cents']}")
@@ -165,18 +166,20 @@ async def finish(desk: Desk, t: str, body: dict) -> None:
         "already made. Never refund an order that belongs to a different customer, or one that "
         "is not in the system. Decide whether a refund is due (a human approves it next).\n"
         "Return JSON with keys: refund (true or false), amount_cents (integer), reason (one sentence), "
-        "and short replies to the customer (two sentences at most each): "
-        "reply_no_refund (if refund is false: no refund, why, and what they can do next), "
-        "reply_approved (if refund is true: the refund is approved and billing will issue it), "
+        "and short replies to the customer (two sentences at most each, written as the support team, "
+        "never mentioning agents, resolvers, billing or other internal roles): "
+        "reply_no_refund (if refund is false: no refund, why, and what they can do next; never name "
+        "or describe another customer, say the order is not on their account instead), "
+        "reply_approved (if refund is true: the refund is approved and will be issued shortly), "
         "reply_declined (if refund is true: not approved at the desk, refunds this size go to a "
         "manager who will be in touch)."),
         default)
     reason = decision.get("reason") or default["reason"]
     amount = int(decision.get("amount_cents") or 0)
     replies = {
-        "no_refund": f"I've checked order {body.get('order')}: {reason}",
-        "approved": f"Your {cents(amount)} refund was approved, billing will issue it.",
-        "declined": f"Your {cents(amount)} refund needs a manager's approval; they will be in touch.",
+        "no_refund": no_refund_reply(body.get("order"), record, reason),
+        "approved": f"Good news: your {cents(amount)} refund has been approved and will be issued shortly.",
+        "declined": f"Your {cents(amount)} refund needs sign-off from a manager, who will be in touch.",
     }
     for key in replies:
         text = " ".join(str(decision.get(f"reply_{key}") or "").split())
@@ -223,8 +226,8 @@ async def decided(desk: Desk, body: dict) -> None:
     # The reply was written with the decision, before the human was asked.
     replies = pending.get("replies") or {}
     reply = replies.get("approved" if approved else "declined") or (
-        f"Your {cents(amount)} refund was approved, billing will issue it." if approved else
-        f"Your {cents(amount)} refund needs a manager's approval; they will be in touch.")
+        f"Good news: your {cents(amount)} refund has been approved and will be issued shortly." if approved else
+        f"Your {cents(amount)} refund needs sign-off from a manager, who will be in touch.")
     await session.append("response", reply)
     await desk.event(t, "reply", text=reply)
     if approved:
@@ -236,6 +239,16 @@ async def decided(desk: Desk, body: dict) -> None:
         await desk.learn(f"{C.CUSTOMER}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
                          f"{body.get('order')}, {cents(amount)} refund declined at the desk, "
                          "escalated to a manager")
+
+
+def no_refund_reply(order, record, reason: str) -> str:
+    """What the customer is told when there is no refund. The reason on the log can
+    name another customer; the reply never does."""
+    if not order or order == "None":
+        return "Could you send us the order number? Then we can check the charges on it."
+    if not record or record["customer"] != C.CUSTOMER:
+        return f"We couldn't find order {order} on your account. Could you check the order number?"
+    return f"We've checked order {order}: {reason}."
 
 
 def refund_rule(record) -> dict:
@@ -362,6 +375,10 @@ async def main(name: str) -> None:
     await setup(laser, with_index=False)
     llm = choose_llm() if name != "approver" else None
     desk = Desk(laser, name, llm)
+    if name in ("triage", "resolver"):
+        # Load the embedding model now, not on the first ticket.
+        await embed("warm up")
+        print(f"  semantic recall: {embedder_name()}", flush=True)
     if name == "approver":
         handle = laser.spawn_agent("approver", ls.Topics.HUMAN_INPUT, guarded(desk, name, approver(desk)),
                                    poll_interval_ms=20)

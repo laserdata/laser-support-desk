@@ -128,7 +128,8 @@ class App:
 
     # ---- HTTP
     async def index(self, _request) -> web.FileResponse:
-        return web.FileResponse(STATIC / "index.html")
+        # No stale page after an edit: the browser revalidates every load.
+        return web.FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     async def config(self, _request) -> web.Response:
         return web.json_response({
@@ -204,7 +205,10 @@ class App:
         t = request.query.get("ticket")
         if not t:
             return web.json_response({"error": "ticket required"}, status=400)
-        return web.json_response(await readers(self.desk, t))
+        try:
+            return web.json_response(await readers(self.desk, t))
+        except ls.InvalidError:
+            return web.json_response({"error": "not a ticket id"}, status=400)
 
     async def websocket(self, request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=20)
@@ -236,6 +240,7 @@ def make_app() -> web.Application:
         web.post("/api/csat", state.csat),
         web.get("/api/readers", state.readers),
         web.get("/ws", state.websocket),
+        web.static("/static", STATIC),
     ])
     return app
 

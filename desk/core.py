@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 
 import laser_sdk as ls
@@ -57,8 +58,46 @@ async def start_projector(laser: ls.Laser) -> None:
             await asyncio.sleep(0.2)
 
 
+# Semantic recall uses a small local model: fastembed running BAAI/bge-small-en-v1.5
+# on the CPU (about 64 MB, downloaded once to ~/.cache/fastembed, offline after).
+# DESK_EMBEDDER=toy, or fastembed not installed, falls back to bag-of-words.
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+_model = None  # loaded on first use; False once it is known to be unavailable
+_model_lock = threading.Lock()
+
+
+def load_embedder():
+    """The embedding model, loaded once per process (None means bag-of-words)."""
+    global _model
+    with _model_lock:
+        if _model is None:
+            _model = False
+            if os.environ.get("DESK_EMBEDDER", "fastembed") != "toy":
+                try:
+                    from fastembed import TextEmbedding
+                    cache = os.environ.get("FASTEMBED_CACHE_PATH",
+                                           os.path.expanduser("~/.cache/fastembed"))
+                    _model = TextEmbedding(EMBED_MODEL, cache_dir=cache)
+                except Exception as error:  # noqa: BLE001
+                    print(f"  semantic recall: {EMBED_MODEL} unavailable ({error}); "
+                          "using the bag-of-words embedder", flush=True)
+        return _model or None
+
+
+def embedder_name() -> str:
+    return EMBED_MODEL if load_embedder() else "bag-of-words"
+
+
 async def embed(text: str) -> list[float]:
-    """Deterministic bag-of-words embedder. A real model is item 4 on the list."""
+    model = await asyncio.to_thread(load_embedder)
+    if model is None:
+        return bag_of_words(text)
+    vector = await asyncio.to_thread(lambda: next(iter(model.embed([text]))))
+    return [float(v) for v in vector]
+
+
+def bag_of_words(text: str) -> list[float]:
+    """Deterministic fallback: shared words only, no meaning."""
     dims, vector, token = 64, [0.0] * 64, ""
     for char in text.lower() + " ":
         if char.isalnum():
@@ -104,6 +143,10 @@ class Desk:
         # memory reads back on Laser SDK 0.4.0 (see memory_probe.py).
         self.kb_mem = self.sessions.create(C.KB_SCOPE).memory()
         self._kb_index = None
+        # Customer history, embedded once per note per process (see history_recall).
+        self._history_index = None
+        self._history_seen: set[str] = set()
+        self._history_epoch = None
 
     # ---- the log
     async def event(self, t: str, step: str, agent: str | None = None, **extra) -> None:
@@ -178,6 +221,7 @@ class Desk:
         if left:
             await self.meta.set("epoch").payload(str(await self.epoch() + 1)).send()
         self._kb_index = None
+        self._history_index = None
         return {"forgotten": removed, "still_recalled": left, "new_epoch": bool(left)}
 
     # ---- memory
@@ -211,11 +255,20 @@ class Desk:
         return [m.text for m in await self._kb_index.recall(semantic=query, limit=limit)]
 
     async def history_recall(self, query: str, limit: int = 3) -> list[str]:
-        # Reloaded each time: another process may have written to it since.
-        index = self.laser.vector_memory(embed)
-        for item in await (await self.history_mem()).recall(limit=500):
-            await index.remember(item.text)
-        return [m.text for m in await index.recall(semantic=query, limit=limit)]
+        # Another process may have written notes since the last call, so read the
+        # durable memory each time, but only embed the notes this index has not
+        # seen. A cleared memory (or a new epoch) rebuilds it.
+        epoch = await self.epoch()
+        notes = [item.text for item in await (await self.history_mem()).recall(limit=500)]
+        if (self._history_index is None or self._history_epoch != epoch
+                or not self._history_seen <= set(notes)):
+            self._history_index = self.laser.vector_memory(embed)
+            self._history_seen, self._history_epoch = set(), epoch
+        for note in notes:
+            if note not in self._history_seen:
+                self._history_seen.add(note)
+                await self._history_index.remember(note)
+        return [m.text for m in await self._history_index.recall(semantic=query, limit=limit)]
 
     async def history_recent(self, n: int = 3) -> list[str]:
         items = [item.text for item in await (await self.history_mem()).recall(limit=500)]

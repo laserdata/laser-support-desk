@@ -7,7 +7,7 @@ import asyncio, os, sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "fake")); sys.path.insert(1, str(HERE.parent))
-os.environ.update(DESK_LLM="mock", DESK_OTEL="0", DESK_POLICY_PAUSE="0")
+os.environ.update(DESK_LLM="mock", DESK_OTEL="0", DESK_POLICY_PAUSE="0", DESK_EMBEDDER="toy")
 import laser_sdk as ls
 assert "fake" in ls.__file__, "tests must run against the fake"
 from desk import config as C, agents as A
