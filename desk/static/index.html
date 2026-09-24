@@ -3,322 +3,852 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Support Desk on Laser SDK</title>
+<title>Support Desk · LaserData</title>
 <style>
+  /* The demo's navy, with LaserData lime (--brand, --green) as the accent. */
   :root {
     --bg: #0a1020; --panel: #111a2e; --panel2: #0d1526; --line: #22304d; --text: #dfe7f5;
-    --muted: #8796b3; --green: #7cf29a; --blue: #5aa9ff; --red: #ff5a6a; --amber: #ffb84d;
-    --violet: #c792ff; --cyan: #5fd7e8;
+    --muted: #8796b3; --brand: #b8ff52; --green: #b8ff52; --blue: #5aa9ff; --red: #ff5a6a; --amber: #ffb84d;
+    --violet: #c792ff; --ckpt: #5fd7e8; --chip: #13213d; --chip-line: #294069;
+    --btn: #1b2a47; --btn-line: #2d4270; --cust: #1f2e1a; --cust-line: #3f5a26;
+    --ok-bg: #1f3316; --ok-line: #5c8a1f; --bad-bg: #3b1a22; --bad-line: #7a2f3d;
+    --warn-bg: #2a2210; --on-accent: #0a1020; --logo-fg: #ffffff; --logo-cut: #041520;
+    --shadow: 0 8px 24px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+  /* Dark is the demo's look. Light is opt-in, for slides and screenshots. */
+  :root[data-theme="light"] {
+    --bg: #f4f6fb; --panel: #ffffff; --panel2: #f0f3f9; --line: #d5dcea; --text: #1a2236;
+    --muted: #5d6b86; --brand: #b8ff52; --green: #3f7d0a; --blue: #1f6fd1; --red: #c92f40; --amber: #a86500;
+    --violet: #7a3fc4; --ckpt: #0b7f91; --chip: #eef2fa; --chip-line: #c6d1e6;
+    --btn: #eef2fa; --btn-line: #bccbe6; --cust: #eefbd9; --cust-line: #a9d46a;
+    --ok-bg: #e6f7c9; --ok-line: #7fb33a; --bad-bg: #fbe3e6; --bad-line: #e0909b;
+    --warn-bg: #fff3dc; --on-accent: #ffffff; --logo-fg: #1a2236; --logo-cut: #ffffff;
+    --shadow: 0 8px 24px rgba(20,30,60,.15);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { font-size: 13px; }
+  html.present { font-size: 16px; }
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
-         font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; overflow: hidden; }
-  header { display: flex; align-items: baseline; gap: 16px; padding: 8px 14px; flex: none; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  header h1 { margin: 0; font-size: 17px; font-weight: 600; }
+         font: 1rem/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 1.2rem; padding: .6rem 1.1rem; flex: none; border-bottom: 1px solid var(--line); }
+  header h1 { white-space: nowrap; }
+  header h1 { margin: 0; font-size: 1.3rem; font-weight: 600; letter-spacing: -.01em; }
   header h1 b { color: var(--green); }
-  header .meta { color: var(--muted); font-size: 12px; }
+  #logo { display: inline-flex; align-items: center; height: 1.9rem; color: inherit; text-decoration: none; }
+  #logo svg { height: 100%; width: auto; }
+  #logo #D, #logo #laserdata { fill: var(--logo-fg) !important; stroke: var(--logo-fg) !important; }
+  #logo #L { fill: var(--logo-cut) !important; }
+  #logo .fallback { font: 600 1.3rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header .divider { width: 1px; align-self: stretch; background: var(--line); }
+  header .meta { color: var(--muted); font-size: .92rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html.present header .meta { display: none; }
+  header .tools { margin-left: auto; display: flex; gap: .5rem; align-items: center; position: relative; flex: none; }
+  header .tools button { white-space: nowrap; }
   /* Fit the window: every column scrolls on its own, the page never does. */
-  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 26%) 1fr minmax(260px, 28%);
-         gap: 10px; padding: 10px 14px; }
-  @media (max-width: 900px) { body { overflow: auto; } main { grid-template-columns: 1fr; } .panel { max-height: 80vh; } }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-  #lanes { flex: 1; min-height: 0; overflow-y: auto; }
-  #readers { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
-  .panel h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-  /* chat */
-  #chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
-  .msg { padding: 8px 10px; border-radius: 10px; max-width: 92%; white-space: pre-wrap; }
-  .msg.customer { align-self: flex-end; background: #1d3b2b; border: 1px solid #2c5a41; }
-  .msg.agent { align-self: flex-start; background: var(--panel2); border: 1px solid var(--line); }
-  .msg .who { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
-  .approval { border: 1px solid var(--amber); background: #2a2210; border-radius: 10px; padding: 10px; }
-  .approval .row { display: flex; gap: 8px; margin-top: 8px; }
-  textarea, select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
-  textarea { height: 54px; resize: vertical; margin-top: 6px; }
-  button { background: #1b2a47; color: var(--text); border: 1px solid #2d4270; border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer; }
-  button:hover { border-color: var(--blue); }
-  button.primary { background: #1f5134; border-color: #2f7a4e; }
-  button.danger { background: #3b1a22; border-color: #7a2f3d; }
-  button.small { padding: 3px 8px; font-size: 12px; }
-  .composer { margin-top: 8px; flex: none; }
-  .composer .row { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
-  /* lanes */
-  .status { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; flex: none; }
-  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
-  .pill.on { color: var(--bg); background: var(--green); border-color: var(--green); }
-  .lane { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: start; padding: 6px 0; border-top: 1px dashed var(--line); }
-  .lane:first-of-type { border-top: 0; }
-  .agent { display: flex; flex-direction: column; gap: 6px; }
-  .agent .name { font-weight: 600; }
-  .agent .pid { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
-  .agent .pid.dead { color: var(--red); }
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
-  .chip { font: 12px ui-monospace, Menlo, monospace; padding: 3px 7px; border-radius: 6px; background: #13213d; border: 1px solid #294069; cursor: pointer; }
-  .chip.llm { background: #172a1f; border-color: #2c6b45; color: var(--green); }
-  .chip.ckpt { border-style: dashed; border-color: var(--cyan); color: var(--cyan); }
-  .chip.crash, .chip.killed { background: #3b1a22; border-color: var(--red); color: var(--red); }
-  .chip.replay { border-color: var(--amber); color: var(--amber); }
-  .chip.refund { background: var(--green); color: var(--bg); border-color: var(--green); font-weight: 700; }
-  .chip.dedup { border-color: var(--violet); color: var(--violet); }
-  .chip.human, .chip.approve { border-color: var(--amber); color: var(--amber); }
-  .chip.sel { outline: 2px solid var(--blue); }
-  #detail { margin-top: 8px; flex: none; max-height: 22vh; overflow-y: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 48px; font-size: 12.5px; white-space: pre-wrap; }
-  #detail .k { color: var(--muted); font-size: 11px; }
-  .legend { flex: none; padding-top: 8px; color: var(--muted); font-size: 11px; }
-  /* readers */
-  .reader { border-top: 1px solid var(--line); padding: 8px 0; }
-  .reader:first-of-type { border-top: 0; padding-top: 0; }
-  .reader h3 { margin: 0 0 4px; font-size: 12px; color: var(--blue); font-weight: 600; }
-  .reader .tag { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
-  .reader ul { margin: 0; padding-left: 16px; }
-  .reader li { margin: 2px 0; font-size: 12.5px; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 25%) 1fr minmax(280px, 27%);
+         gap: .8rem; padding: .8rem 1.1rem; }
+  @media (max-width: 900px) {
+    body { overflow: auto; } main { grid-template-columns: 1fr; padding: .8rem 16px; }
+    .panel { height: 88vh; } header { padding: .6rem 16px; } header .divider { display: none; }
+    #chat { min-height: 8rem; } #tl { min-height: 16rem; }
+    /* Narrow lanes: the text goes under its chip instead of beside it. */
+    .cell { padding: .25rem .6rem .25rem 1rem; }
+    .cell.ev { flex-wrap: wrap; row-gap: .1rem; }
+    .cell .txt { flex-basis: 100%; }
+  }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .8rem; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; position: relative; }
+  .panel h2 { margin: 0 0 .6rem; font: 500 .82rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; white-space: nowrap; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: .5rem; flex: none; }
+  .panel h2 .grow { flex: 1; }
+  .panel h2 .ticket { text-transform: none; letter-spacing: 0; font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .panel h2::before { content: ""; width: .45rem; height: .45rem; border-radius: 50%; border: 1.5px solid var(--green); flex: none; }
   .muted { color: var(--muted); }
   .pass { color: var(--green); } .fail { color: var(--red); }
-  .stars button { padding: 3px 9px; }
   a { color: var(--blue); }
+  textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .6rem; font: inherit; }
+  textarea { height: 4.2rem; resize: vertical; }
+  button { background: var(--btn); color: var(--text); border: 1px solid var(--btn-line); border-radius: 8px; padding: .5rem .9rem; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--blue); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #07111a; font-weight: 600; }
+  button.primary:hover { border-color: var(--text); }
+  button.danger { background: var(--bad-bg); border-color: var(--bad-line); }
+  button.small { padding: .2rem .6rem; font-size: .92rem; }
+  button.ghost { background: transparent; }
+  button.on { border-color: var(--blue); color: var(--blue); }
+  .popover { position: absolute; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: .5rem; }
+  #menu-list { top: calc(100% + 6px); right: 0; display: flex; flex-direction: column; gap: .4rem; min-width: 12rem; }
+  #menu-list button { text-align: left; }
+  html.present #more { display: none; }
+
+  /* chat */
+  #scenarios { display: flex; flex-wrap: wrap; gap: .35rem; flex: none; max-height: 30%; overflow-y: auto; }
+  #scenarios button { font-size: .88rem; padding: .25rem .6rem; }
+  #scenarios button.sel { border-color: var(--green); color: var(--green); }
+  #about { flex: none; margin: .5rem 0 0; font-size: .92rem; color: var(--muted); min-height: 1.3em; }
+  #about b { color: var(--text); font-weight: 600; }
+  #approval:not(:empty) { flex: none; margin-top: .6rem; }
+  .approval { border: 1px solid var(--amber); background: var(--warn-bg); border-radius: 10px; padding: .7rem; box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 25%, transparent); }
+  .approval .who { display: block; font-size: .85rem; color: var(--amber); font-weight: 600; margin-bottom: .2rem; }
+  .approval .row { display: flex; gap: .6rem; margin-top: .6rem; }
+  #chat { flex: 1; min-height: 6rem; overflow-y: auto; display: flex; flex-direction: column; gap: .45rem; padding: .6rem 4px 0 0; }
+  #chat > :first-child { margin-top: auto; }
+  .msg { padding: .6rem .8rem; border-radius: 10px; max-width: 92%; white-space: pre-wrap; }
+  .msg.customer { align-self: flex-end; background: var(--cust); border: 1px solid var(--cust-line); }
+  .msg.agent { align-self: flex-start; background: var(--panel2); border: 1px solid var(--line); }
+  .msg.system { align-self: center; max-width: 100%; padding: .2rem .7rem; font-size: .9rem; color: var(--muted); border: 1px dashed var(--line); border-radius: 999px; }
+  .msg.system.approved { color: var(--green); border-color: var(--ok-line); }
+  .msg.system.declined { color: var(--red); border-color: var(--bad-line); }
+  .msg .who { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .15rem; }
+  #typing { flex: none; font-size: .92rem; color: var(--muted); padding: .4rem 0 0; min-height: 1.8rem; }
+  #typing.human { color: var(--amber); }
+  #typing.dead { color: var(--red); }
+  .dots::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  .composer { margin-top: .4rem; flex: none; }
+  .composer .row { display: flex; gap: .6rem; margin-top: .5rem; align-items: center; }
+  .composer .row .muted { flex: 1; font-size: .85rem; }
+
+  /* stepper */
+  #stepper { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; flex: none; margin-bottom: .6rem; min-height: 1.9rem; }
+  .step { font-size: .92rem; padding: .15rem .6rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .step.done { color: var(--text); border-color: var(--chip-line); }
+  .step.cur { color: var(--on-accent); background: var(--blue); border-color: var(--blue); font-weight: 600; }
+  .step.cur.final { background: var(--green); border-color: var(--green); }
+  .step.cur.final.bad { background: var(--amber); border-color: var(--amber); }
+  .step.ghost { border-style: dashed; }
+  .sep { color: var(--muted); }
+
+  /* timeline */
+  .tl-wrap { flex: 1; min-height: 12rem; position: relative; display: flex; flex-direction: column; }
+  #tl-more { position: absolute; bottom: .7rem; left: 50%; transform: translateX(-50%); z-index: 6;
+             background: var(--blue); border-color: var(--blue); color: var(--on-accent); font-weight: 600; box-shadow: var(--shadow); }
+  #tl { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); }
+  .heads, #tl-rows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .heads { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 6px 10px -6px rgba(0,0,0,.45); }
+  .head { padding: .45rem .7rem; border-left: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: .15rem .5rem; align-items: center; transition: background .3s; }
+  .head .hname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .head .pid, .head .hold { flex-basis: 100%; }
+  .head:first-child { border-left: 0; }
+  .head .hname { font-weight: 600; font-size: 1.05rem; }
+  .head.active .hname { color: var(--blue); }
+  .head .pid { font: .88rem ui-monospace, Menlo, monospace; color: var(--muted); }
+  .head .pid s { color: var(--red); }
+  .head.dead .pid { color: var(--red); }
+  .head.flash { animation: flash 1.4s ease-out; }
+  @keyframes flash { 0%, 30% { background: color-mix(in srgb, var(--red) 45%, transparent); } 100% { background: transparent; } }
+  .head .hold { font-size: .85rem; color: var(--amber); font-weight: 600; }
+  .head .hold:empty { display: none; }
+  .pulse { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 45%, transparent); } }
+  #tl { display: flex; flex-direction: column; }
+  #tl-body { position: relative; padding-bottom: .4rem; flex: 1 0 auto; display: flex; flex-direction: column; }
+  #tl-rows { flex: 1 0 auto; }
+  #tl-empty { padding: 1.4rem; text-align: center; }
+  #links { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; z-index: 2; }
+  #links path { fill: none; stroke-width: 1.6; }
+  #links path.handoff { stroke: var(--blue); opacity: .75; }
+  #links path.resume { stroke: var(--ckpt); stroke-dasharray: 4 3; stroke-width: 2; }
+  #mk-handoff path { fill: var(--blue); } #mk-resume path { fill: var(--ckpt); }
+  /* Each lane stacks its own steps from the top. The left padding carries the
+     resume arc, the right padding the handoff line. */
+  #tl-rows { align-items: start; }
+  .lane-col { min-width: 0; display: flex; flex-direction: column; gap: 1px; padding-top: .3rem; border-left: 1px solid var(--line); align-self: stretch; }
+  .lane-col:first-child { border-left: 0; }
+  .cell { padding: .2rem 1rem .2rem 1.3rem; }
+  .cell.ev { display: flex; gap: .45rem; align-items: baseline; cursor: pointer; border-radius: 4px; }
+  .cell.ev:hover { background: color-mix(in srgb, var(--blue) 8%, transparent); }
+  .cell .txt { font-size: .9rem; color: var(--muted); min-width: 0; overflow: hidden; overflow-wrap: anywhere;
+               display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .cell.open .txt { display: block; white-space: pre-wrap; color: var(--text); }
+  .cell.open { background: color-mix(in srgb, var(--blue) 10%, transparent); }
+  .cell.new { animation: newrow .8s ease-out; }
+  @keyframes newrow { from { background: color-mix(in srgb, var(--blue) 25%, transparent); } }
+  .cell.kill { background: color-mix(in srgb, var(--red) 16%, transparent); border-top: 2px dashed var(--red); border-bottom: 2px dashed var(--red); }
+  .cell.kill .txt { color: var(--red); font-weight: 600; }
+  .cell.restart { background: color-mix(in srgb, var(--green) 12%, transparent); }
+  .cell.restart .txt { color: var(--green); }
+  .cell.dedup s { color: var(--muted); }
+  .chip { font: .88rem ui-monospace, Menlo, monospace; padding: .1rem .45rem; border-radius: 6px; background: var(--chip); border: 1px solid var(--chip-line); flex: none; white-space: nowrap; }
+  .chip.llm { border-color: var(--ok-line); color: var(--green); }
+  .chip.ckpt { border-style: dashed; border-color: var(--ckpt); color: var(--ckpt); }
+  .chip.crash, .chip.killed { background: var(--red); border-color: var(--red); color: var(--on-accent); font-weight: 700; }
+  .chip.restart { background: var(--green); border-color: var(--green); color: var(--on-accent); font-weight: 700; }
+  .chip.replay { border-color: var(--ckpt); background: var(--ckpt); color: var(--on-accent); font-weight: 700; }
+  .chip.refund { background: var(--green); color: var(--on-accent); border-color: var(--green); font-weight: 700; }
+  .chip.dedup { border-color: var(--violet); color: var(--violet); font-weight: 700; }
+  .chip.human, .chip.approve { border-color: var(--amber); color: var(--amber); }
+  .chip.route, .chip.recv { border-color: var(--blue); color: var(--blue); }
+  .badge { font-size: .75rem; padding: 0 .35rem; border-radius: 4px; border: 1px solid var(--ckpt); color: var(--ckpt); flex: none; white-space: nowrap; }
+  .foot { flex: none; padding-top: .5rem; color: var(--muted); font-size: .85rem; }
+  html.present .foot { display: none; }
+  #legend { top: 2.2rem; right: .8rem; width: min(30rem, calc(100% - 1.6rem)); max-height: 70%; overflow-y: auto; padding: .7rem; }
+  #legend dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem .6rem; margin: 0; align-items: baseline; }
+  #legend dd { margin: 0; font-size: .9rem; }
+  #legend .line { display: inline-block; width: 2.2rem; border-top: 2px solid var(--blue); vertical-align: middle; }
+  #legend .line.resume { border-top: 2px dashed var(--ckpt); }
+
+  /* readers */
+  #score { flex: none; max-height: 48%; overflow-y: auto; margin-bottom: .6rem; border: 1px solid var(--line); border-radius: 8px; padding: .6rem .7rem; background: var(--panel2); }
+  #score .headline { font-size: 1.15rem; font-weight: 600; }
+  #score ul { margin: .3rem 0; padding-left: 0; list-style: none; }
+  #score li { font-size: .92rem; margin: .15rem 0; }
+  #score .stars { margin-top: .5rem; display: flex; gap: .3rem; align-items: center; flex-wrap: wrap; }
+  #readers { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: .5rem; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: .5rem .7rem; }
+  .card h3 { margin: 0; font-size: .85rem; color: var(--blue); font-weight: 600; letter-spacing: .04em; }
+  .card .tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; margin-left: .4rem; font-weight: 400; }
+  .card .value { font-size: 1.15rem; font-weight: 600; margin: .15rem 0; overflow-wrap: anywhere; border-radius: 4px; }
+  .card .value.flash { animation: fresh 2s ease-out; }
+  .card .sub { font-size: .85rem; color: var(--muted); }
+  .card details { margin-top: .3rem; }
+  .card summary { cursor: pointer; font-size: .88rem; color: var(--muted); }
+  .card summary .new { color: var(--green); margin-left: .3rem; }
+  .card ul { margin: .3rem 0 0; padding-left: 1.1rem; }
+  .card li { margin: .2rem 0; font-size: .92rem; overflow-wrap: anywhere; border-radius: 4px; }
+  .card li.fresh { animation: fresh 2.4s ease-out; }
+  .card li.this { color: var(--green); }
+  .card .kind { font: .8rem ui-monospace, Menlo, monospace; color: var(--muted); margin-right: .3rem; }
+  @keyframes fresh { 0%, 40% { background: color-mix(in srgb, var(--green) 30%, transparent); } 100% { background: transparent; } }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .3rem; font-size: .9rem; }
+  .split .k { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
 </style>
 </head>
 <body>
 <header>
+  <a id="logo" href="https://laserdata.com" target="_blank" rel="noopener" aria-label="LaserData"><span class="fallback">laserdata</span></a>
+  <span class="divider" aria-hidden="true"></span>
   <h1>Agents fail. <b>Their sessions shouldn't.</b></h1>
   <span class="meta" id="meta">connecting…</span>
-  <button class="small" id="clearmem" style="margin-left:auto" title="Forget all customer history, then reseed the starting notes">Clear memory</button>
-  <button class="small" id="reset" title="Orders back to the configured data, and customer history cleared">Reset demo data</button>
+  <div class="tools">
+    <button class="small ghost" id="present" title="Larger type, demo data controls hidden">Presenter mode</button>
+    <button class="small ghost" id="theme" title="Light theme for slides and screenshots">Light theme</button>
+    <button class="small ghost" id="more" aria-haspopup="true" aria-expanded="false">Demo data ▾</button>
+    <div class="popover" id="menu-list" hidden>
+      <button class="small" id="clearmem" title="Forget all customer history, then reseed the starting notes">Clear memory</button>
+      <button class="small danger" id="reset" title="Orders back to the configured data, and customer history cleared">Reset demo data</button>
+    </div>
+  </div>
 </header>
 <main>
   <section class="panel">
     <h2>Customer chat</h2>
-    <div id="chat"><div class="muted">Pick a scenario or type a message to open a ticket.</div></div>
+    <div id="scenarios"></div>
+    <div id="about">Pick a scenario to open a ticket, or type your own message below.</div>
+    <div id="approval"></div>
+    <div id="chat"></div>
+    <div id="typing"></div>
     <div class="composer">
-      <select id="scenario"></select>
-      <textarea id="text" placeholder="Customer message"></textarea>
-      <div class="row"><button class="primary" id="send">Send</button></div>
+      <textarea id="text" placeholder="Or type your own customer message"></textarea>
+      <div class="row"><span class="muted">Enter sends, Shift+Enter for a new line</span><button class="primary" id="send">Send</button></div>
     </div>
   </section>
 
   <section class="panel">
-    <h2>Durable session log <span class="muted" id="ticket"></span></h2>
-    <div class="status" id="status"></div>
-    <div id="lanes"></div>
-    <div id="detail"><span class="muted">Click a step to see what happened.</span></div>
-    <div class="legend">Each agent is its own process. <b>Kill</b> sends SIGKILL; the supervisor starts a new one, the log redelivers what was unfinished, and a resolver killed after its checkpoint resumes from it.<span id="pausenote" hidden> The resolver holds for <span id="pause">0</span>s at the policy step so there is time to kill it mid-case.</span></div>
+    <h2>Durable session log <span class="ticket muted" id="ticket"></span><span class="grow"></span>
+      <button class="small ghost" id="keybtn" aria-expanded="false">Key</button></h2>
+    <div id="stepper"><span class="muted">No ticket yet.</span></div>
+    <div class="tl-wrap">
+    <div id="tl">
+      <div class="heads" id="heads"></div>
+      <div id="tl-body">
+        <svg id="links" aria-hidden="true">
+          <defs>
+            <marker id="mk-handoff" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z"/></marker>
+            <marker id="mk-resume" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z"/></marker>
+          </defs>
+          <g id="link-paths"></g>
+        </svg>
+        <div id="tl-rows"></div>
+        <div id="tl-empty" class="muted">Each agent's steps land here, in log order. Click a step to read it.</div>
+      </div>
+    </div>
+    <button class="small" id="tl-more" hidden>New steps ↓</button>
+    </div>
+    <div class="foot">Each agent is its own process. <b>Kill</b> sends SIGKILL; the supervisor starts a new one, the log redelivers what was unfinished, and a resolver killed after its checkpoint resumes from it.<span id="pausenote" hidden> The resolver holds for <span id="pause">0</span>s at the policy step so there is time to kill it mid-case.</span><span id="nopause" hidden> The policy pause is off, so the resolver usually finishes before you can kill it mid-case: restart the server with <code>DESK_POLICY_PAUSE=8</code> to demo crash and resume.</span></div>
+    <div class="popover" id="legend" hidden></div>
   </section>
 
   <section class="panel">
     <h2>One log, many readers</h2>
-    <div id="readers" class="muted">Readers appear once a ticket is open.</div>
+    <div id="score" hidden></div>
+    <div id="readers"><span class="muted">Readers appear once a ticket is open.</span></div>
   </section>
 </main>
 <script>
 const LANES = ["triage", "resolver", "billing"];
-const STATUSES = ["open", "triaged", "resolving", "awaiting approval", "refunded", "answered", "closed", "declined"];
-let current = null, config = null, refreshTimer = null, pids = {}, evalHtml = "", sending = false, sawCustomer = false;
+const TERMINAL = ["refunded", "answered", "closed", "declined"];
+const STEP_INFO = {
+  msg: "customer message received", kb: "knowledge base and customer history looked up",
+  llm: "LLM call", intent: "intent extracted", reply: "reply sent to the customer",
+  ckpt: "checkpoint saved: a restart resumes from here", route: "handed off to another agent over the log",
+  recv: "handoff received from the log", ctx: "context assembled from the session",
+  order: "order looked up", policy: "refund policy check", memory: "session memory read",
+  replay: "redelivered after a restart, resumed from the checkpoint", approve: "asked a human to approve",
+  human: "human decision received", acct: "customer account read", ledger: "ledger entry written",
+  refund: "refund issued (fires once)", ok: "done, final reply sent",
+  dedup: "a redelivered refund, skipped by its dedup key in KV", skip: "redelivery ignored, the ticket already finished",
+  killed: "process killed with SIGKILL", restart: "the supervisor started a new process",
+  crash: "process killed itself (CLI crash test)", error: "agent error",
+};
+
+let config = null, current = null, currentTrace = null, sending = false, sawCustomer = false;
+let pids = {}, pidTrail = {}, kills = {}, visited = [], links = [], lastCkpt = {}, resumeFrom = {},
+    pendingRoute = {}, approvalOpen = false, holder = null, evalResult = null, csatScore = null,
+    prevKeys = {}, prevVal = {}, refreshTimer = null, countdown = null, holdText = "";
+const recent = [];  // events that may land before the ticket they belong to is set
+const openCards = new Set(["memory"]);
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const post = (url, body) => fetch(url, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const currentStatus = () => visited[visited.length - 1];
 
-function buildLanes() {
-  $("lanes").innerHTML = LANES.map(name => `
-    <div class="lane">
-      <div class="agent">
-        <span class="name">${name}</span>
-        <span class="pid" id="pid-${name}">${pids[name] ? "pid " + pids[name] : "starting…"}</span>
-        <button class="small danger" onclick="kill('${name}')">Kill ${name}</button>
-      </div>
-      <div class="chips" id="lane-${name}"></div>
-    </div>`).join("");
-  $("status").innerHTML = STATUSES.map(s => `<span class="pill" id="st-${s.replace(/ /g, "-")}">${s}</span>`).join("");
+// ---------------------------------------------------------------- ticket lifecycle
+
+function resetTicket(t, label) {
+  current = t; currentTrace = null; sawCustomer = false; visited = []; links = [];
+  lastCkpt = {}; resumeFrom = {}; pendingRoute = {}; kills = {}; approvalOpen = false;
+  evalResult = null; csatScore = null; prevKeys = {}; prevVal = {};
+  stopCountdown();
+  pidTrail = Object.fromEntries(LANES.map(n => [n, pids[n] ? [pids[n]] : []]));
+  $("ticket").textContent = "· ticket " + t.slice(0, 12) + (label ? " · " + label : "");
+  $("chat").innerHTML = ""; $("approval").innerHTML = "";
+  following = true; $("tl-more").hidden = true;
+  $("tl-rows").innerHTML = LANES.map(n => `<div class="lane-col" id="col-${n}"></div>`).join("");
+  lastCell = null; $("tl-empty").hidden = true; $("link-paths").innerHTML = "";
+  $("score").hidden = true;
+  $("readers").innerHTML = '<span class="muted">Reading the log…</span>';
+  setHolder(null);
+  renderHeads(); renderStepper();
 }
 
-function chip(lane, step, text, extraClass) {
-  const el = document.createElement("span");
-  el.className = `chip ${step} ${extraClass || ""}`;
-  el.textContent = step;
-  el.title = text || "";
-  el.onclick = () => {
-    document.querySelectorAll(".chip.sel").forEach(c => c.classList.remove("sel"));
-    el.classList.add("sel");
-    $("detail").innerHTML = `<div class="k">${esc(lane)} · ${esc(step)}</div>${esc(text || "(no detail)")}`;
-  };
-  $("lane-" + lane)?.appendChild(el);
+function adopt(ticket) {
+  // A ticket opened somewhere else (python -m desk.run): follow it.
+  resetTicket(ticket, "opened from the CLI");
+  $("about").innerHTML = "Following a ticket opened from the CLI.";
+  document.querySelectorAll("#scenarios button").forEach(b => b.classList.remove("sel"));
 }
+
+async function send(scenario, text) {
+  if (sending || (!text && !scenario)) return;
+  sending = true; setComposerBusy(true);
+  let r;
+  try { r = await post("/api/ticket", {scenario, text}); }
+  catch (err) { r = {error: String(err)}; }
+  sending = false; setComposerBusy(false);
+  if (r.error) { $("about").innerHTML = `<span class="fail">${esc(r.error)}</span>`; return; }
+  resetTicket(r.ticket, scenario || "your message");
+  currentTrace = r.trace;
+  sawCustomer = true;
+  document.querySelectorAll("#scenarios button").forEach(b => b.classList.toggle("sel", b.dataset.s === scenario));
+  const about = scenario && config.scenarios[scenario];
+  $("about").innerHTML = about ? `<b>${esc(scenario)}</b>: ${esc(about.about)}` : "Your own message.";
+  say("customer", r.text, "customer");
+  onStatus("open");
+  $("text").value = "";
+  // Anything the agents logged before the response came back.
+  recent.filter(e => e.ticket === current).forEach(onEvent);
+  setTimeout(refreshReaders, 300);
+}
+
+function setComposerBusy(busy) {
+  $("send").disabled = busy;
+  document.querySelectorAll("#scenarios button").forEach(b => b.disabled = busy);
+}
+
+// ---------------------------------------------------------------- chat
 
 function say(who, text, cls) {
   const chat = $("chat");
-  if (chat.querySelector(".muted")) chat.innerHTML = "";
   const el = document.createElement("div");
   el.className = "msg " + cls;
-  el.innerHTML = `<span class="who">${esc(who)}</span>${esc(text)}`;
+  el.innerHTML = cls.startsWith("system") ? esc(text) : `<span class="who">${esc(who)}</span>${esc(text)}`;
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
   return el;
 }
 
-function adopt(ticket) {
-  // A ticket opened somewhere else (python -m desk.run): follow it.
-  current = ticket; current_trace = null; evalHtml = ""; sawCustomer = false;
-  $("ticket").textContent = "· ticket " + current.slice(0, 12) + " (opened from the CLI)";
-  $("chat").innerHTML = "";
-  $("detail").innerHTML = '<span class="muted">Click a step to see what happened.</span>';
-  $("readers").innerHTML = "";
-  buildLanes();
+function setHolder(h) {
+  holder = h;
+  const el = $("typing");
+  el.className = "";
+  if (!current || !h) { el.innerHTML = ""; }
+  else if (h === "human") { el.className = "human"; el.innerHTML = "Waiting for your approval (above)"; }
+  else if (kills[h]) { el.className = "dead"; el.innerHTML = `<span class="dots">${esc(h)} was killed, the supervisor is restarting it</span>`; }
+  else { el.innerHTML = `<span class="dots">${esc(h)} is working</span>`; }
+  LANES.forEach(n => $("head-" + n)?.classList.toggle("active", n === h));
 }
+
+function onApproval(m) {
+  if (m.ticket !== current) return;
+  approvalOpen = true;
+  $("approval").innerHTML = `<div class="approval" id="ap-${esc(m.id)}">
+    <span class="who">The resolver asks a human</span>${esc(m.text)}
+    <div class="row"><button class="primary" data-d="approved">Approve</button><button class="danger" data-d="declined">Decline</button></div></div>`;
+  $("approval").querySelectorAll("button").forEach(b => b.onclick = () => decide(m.id, b.dataset.d, m.text));
+  $("approval").dataset.id = m.id;
+  $("approval").dataset.text = m.text;
+  setHolder("human");
+}
+
+async function decide(id, decision) {
+  $("approval").querySelectorAll("button").forEach(b => b.disabled = true);
+  await post("/api/approve", {id, decision});
+  closeApproval(id, decision);
+}
+
+function closeApproval(id, decision) {
+  if ($("approval").dataset.id !== id) return;
+  const amount = ($("approval").dataset.text || "").match(/\$[\d,.]+\d/);
+  $("approval").innerHTML = ""; delete $("approval").dataset.id;
+  approvalOpen = false;
+  say("", `You ${decision} the ${amount ? amount[0] + " " : ""}refund`, "system " + decision);
+  setHolder("resolver");
+}
+
+// ---------------------------------------------------------------- the log
 
 function onEvent(e) {
   if (e.agent === "desk" && e.step === "status" && e.status === "open" && e.ticket !== current && !sending) adopt(e.ticket);
   if (e.ticket !== current) return;
   if (e.agent === "triage" && e.step === "msg" && !sawCustomer) { sawCustomer = true; say("customer", e.text, "customer"); }
-  if (e.agent === "evals" && e.step === "eval" && !evalHtml.includes("<ul>")) {
-    evalHtml = `<div>LLM judge: <b>${esc(e.score ?? "–")}/5</b> <span class="muted">${esc(e.text || "")}</span></div>`;
-    if ($("evals")) $("evals").innerHTML = evalHtml;
+  if (e.agent === "evals" && e.step === "eval" && !evalResult) {
+    // CLI tickets: the server does not evaluate them, but the judge is on the log.
+    evalResult = {checks: {}, judge: {score: e.score, reason: e.text}};
+    renderScore();
   }
   if (e.step === "status") {
-    document.querySelectorAll(".pill").forEach(p => p.classList.remove("on"));
-    $("st-" + String(e.status).replace(/ /g, "-"))?.classList.add("on");
+    onStatus(e.status);
   } else if (e.agent === "supervisor" && e.step === "killed") {
-    chip(e.target, "killed", e.text);
+    onKilled(e.target, e.text);
   } else if (LANES.includes(e.agent)) {
-    chip(e.agent, e.step, e.text);
-    if (e.step === "reply" || e.step === "ok") say(e.agent, e.text, "agent");
+    onStep(e);
   }
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(refreshReaders, 700);
 }
 
+function onStatus(status) {
+  if (currentStatus() === status) return;
+  visited.push(status);
+  renderStepper();
+  if (status === "awaiting approval") approvalOpen = true;
+  if (TERMINAL.includes(status)) setHolder(null);
+}
+
+function onStep(e) {
+  const lane = e.agent, step = e.step;
+  let cell;
+  if (step === "dedup") {
+    cell = addRow(lane, `<span class="chip dedup">dedup</span><span class="txt"><s>refund</s> redelivered, already issued: skipped</span>`, "dedup", e.text);
+  } else if (step === "crash") {
+    resumeFrom[lane] = lastCkpt[lane];
+    cell = addRow(lane, stepHtml("crash", e.text), "kill");
+  } else {
+    cell = addRow(lane, stepHtml(step, e.text));
+  }
+  if (step === "ckpt") lastCkpt[lane] = cell;
+  if (step === "route") {
+    const to = /handoff to (\w+)/.exec(e.text || "");
+    if (to) { pendingRoute[to[1]] = cell; setHolder(to[1]); }
+  }
+  if (step === "recv" && pendingRoute[lane]) {
+    links.push({from: pendingRoute[lane], to: cell, cls: "handoff"});
+    delete pendingRoute[lane];
+  }
+  if (step === "replay" && resumeFrom[lane]) {
+    links.push({from: resumeFrom[lane], to: cell, cls: "resume"});
+    resumeFrom[lane].querySelector(".txt").insertAdjacentHTML("afterbegin", '<span class="badge">resume point</span> ');
+    delete resumeFrom[lane];
+  }
+  if (lane === "resolver") {
+    const hold = step === "policy" && /holding ([\d.]+)s/.exec(e.text || "");
+    if (hold) startCountdown(parseFloat(hold[1])); else if (countdown) stopCountdown();
+  }
+  if (step === "human") approvalOpen = false;
+  if (step === "reply" || step === "ok") say(lane, e.text, "agent");
+  if (step === "ok") setHolder(null);
+  else if (step !== "route" && !TERMINAL.includes(currentStatus())) setHolder(approvalOpen ? "human" : lane);
+}
+
+function onKilled(lane, text) {
+  if (!LANES.includes(lane)) return;
+  kills[lane] = kills[lane] || {};
+  kills[lane].row = true;
+  resumeFrom[lane] = lastCkpt[lane];
+  addRow(lane, stepHtml("killed", text), "kill");
+  if (lane === "resolver") stopCountdown();
+  const head = $("head-" + lane);
+  if (head) { head.classList.remove("flash"); void head.offsetWidth; head.classList.add("flash"); }
+  if (kills[lane].pid) addRestartRow(lane);
+  if (holder === lane) setHolder(lane);
+}
+
 function onAgent(m) {
   pids[m.name] = m.state === "started" ? m.pid : null;
-  const el = $("pid-" + m.name);
-  if (!el) return;
-  if (m.state === "started") { el.textContent = "pid " + m.pid; el.classList.remove("dead"); }
-  else { el.textContent = `pid ${m.pid} ${m.state}`; el.classList.add("dead"); }
+  if (current && LANES.includes(m.name)) {
+    if (m.state === "killed") kills[m.name] = kills[m.name] || {};
+    if (m.state === "started") {
+      const trail = pidTrail[m.name] || (pidTrail[m.name] = []);
+      if (trail[trail.length - 1] !== m.pid) trail.push(m.pid);
+      if (kills[m.name]) {
+        kills[m.name].pid = m.pid;
+        // The kill lands on the log a moment after the supervisor hears of it.
+        if (kills[m.name].row) addRestartRow(m.name);
+      }
+    }
+  }
+  renderHeads();
 }
 
-function onApproval(m) {
-  if (m.ticket !== current) return;
-  const el = say("resolver asks a human", m.text, "agent approval");
-  el.id = "ap-" + m.id;
-  const row = document.createElement("div");
-  row.className = "row";
-  row.innerHTML = `<button class="primary">Approve</button><button class="danger">Decline</button>`;
-  row.children[0].onclick = () => decide(m.id, "approved");
-  row.children[1].onclick = () => decide(m.id, "declined");
-  el.appendChild(row);
+function addRestartRow(lane) {
+  const pid = kills[lane].pid;
+  delete kills[lane];
+  addRow(lane, stepHtml("restart", `pid ${pid} started; the log redelivers what was unfinished`), "restart");
+  if (holder === lane) setHolder(lane);
 }
 
-async function decide(id, decision) {
-  await post("/api/approve", {id, decision});
-  const el = $("ap-" + id);
-  if (el) el.querySelector(".row").innerHTML = `<span class="muted">${decision}</span>`;
+// ---------------------------------------------------------------- timeline
+
+function stepHtml(step, text) {
+  const txt = text ? esc(text) : `<span class="muted">${esc(STEP_INFO[step] || "")}</span>`;
+  return `<span class="chip ${esc(step)}" title="${esc(STEP_INFO[step] || step)}">${esc(step)}</span><span class="txt">${txt}</span>`;
 }
+
+function addRow(lane, html, cls, full) {
+  const col = $("col-" + lane);
+  if (!col) return null;
+  const cell = document.createElement("div");
+  cell.className = `cell ev new ${cls || ""}`;
+  cell.innerHTML = html;
+  if (full) cell.title = full;
+  cell.onclick = () => { cell.classList.toggle("open"); scheduleLinks(); };
+  col.appendChild(cell);
+  lastCell = cell;
+  $("tl-empty").hidden = true;
+  followLog();
+  scheduleLinks();
+  return cell;
+}
+
+// The log keeps the newest step in view unless you have scrolled away to
+// read; then a button says there is more and takes you back to it.
+let following = true, lastCell = null;
+function inView(cell) {
+  const tl = $("tl"), top = tl.getBoundingClientRect().top + $("heads").offsetHeight;
+  const r = cell.getBoundingClientRect();
+  return r.top >= top - 2 && r.bottom <= tl.getBoundingClientRect().bottom + 2;
+}
+function followLog() {
+  if (!lastCell) return;
+  if (!following) { $("tl-more").hidden = inView(lastCell); return; }
+  const tl = $("tl"), r = lastCell.getBoundingClientRect(), box = tl.getBoundingClientRect();
+  const top = box.top + $("heads").offsetHeight;
+  if (r.bottom > box.bottom) tl.scrollTop += r.bottom - box.bottom + 8;
+  else if (r.top < top) tl.scrollTop -= top - r.top + 8;
+  $("tl-more").hidden = true;
+}
+function onLogScrolled() {
+  following = !lastCell || inView(lastCell);
+  if (following) $("tl-more").hidden = true;
+}
+
+let linkTimer = 0;
+function scheduleLinks() { clearTimeout(linkTimer); linkTimer = setTimeout(drawLinks, 30); }
+
+function drawLinks() {
+  const body = $("tl-body"), svg = $("links"), br = body.getBoundingClientRect();
+  svg.setAttribute("width", body.scrollWidth); svg.setAttribute("height", body.scrollHeight);
+  const mid = (r) => r.top + r.height / 2 - br.top;
+  $("link-paths").innerHTML = links.filter(l => l.from.isConnected && l.to.isConnected).map(l => {
+    const a = l.from.querySelector(".chip").getBoundingClientRect();
+    const b = l.to.querySelector(".chip").getBoundingClientRect();
+    if (l.cls === "resume") {
+      const x1 = a.left - br.left - 3, x2 = b.left - br.left - 3, bulge = 14;
+      return `<path class="resume" marker-end="url(#mk-resume)" d="M${x1} ${mid(a)} C${x1 - bulge} ${mid(a)}, ${x2 - bulge} ${mid(b)}, ${x2} ${mid(b)}"/>`;
+    }
+    // Out of the handoff step into the gutter at the right of its lane, along
+    // the gutter to the receiving step's row, then into that step.
+    const txt = l.from.querySelector(".txt").getBoundingClientRect(), cell = l.from.getBoundingClientRect();
+    const x1 = txt.right - br.left + 4, xm = cell.right - br.left - 6, x2 = b.left - br.left - 2;
+    const y1 = mid(a), y2 = mid(b), r = Math.min(6, Math.abs(y2 - y1) / 2), dir = y2 < y1 ? -1 : 1;
+    return `<path class="handoff" marker-end="url(#mk-handoff)" d="M${x1} ${y1} H${xm - r} Q${xm} ${y1} ${xm} ${y1 + dir * r} V${y2 - dir * r} Q${xm} ${y2} ${xm + r} ${y2} H${x2}"/>`;
+  }).join("");
+}
+
+function renderHeads() {
+  $("heads").innerHTML = LANES.map(n => {
+    const trail = (pidTrail[n] || []).slice(-2);
+    const alive = !!pids[n];
+    let pid;
+    if (!alive && trail.length) pid = `<s>pid ${trail[trail.length - 1]}</s> restarting…`;
+    else if (!alive) pid = pids[n] === undefined ? "starting…" : "restarting…";
+    else if (trail.length > 1) pid = `<s>pid ${trail[0]}</s> → pid ${trail[1]}`;
+    else pid = `pid ${pids[n]}`;
+    const cls = [n === holder ? "active" : "", alive ? "" : "dead"].join(" ");
+    const hold = n === "resolver" ? esc(holdText) : "";
+    return `<div class="head ${cls}" id="head-${n}">
+      <span class="hname">${n}</span>      <button class="small danger ${hold ? "pulse" : ""}" data-kill="${n}" aria-label="Kill ${n}" title="Kill ${n} (SIGKILL)">Kill</button>
+      <span class="pid">${pid}</span><span class="hold" id="hold-${n}">${hold}</span></div>`;
+  }).join("");
+}
+
+function startCountdown(seconds) {
+  stopCountdown();
+  const end = Date.now() + seconds * 1000;
+  const tick = () => {
+    const left = Math.ceil((end - Date.now()) / 1000);
+    if (left <= 0) return stopCountdown();
+    holdText = `holding ${left}s: kill it now`;
+    const el = $("hold-resolver");
+    if (el) el.textContent = holdText;
+    document.querySelector('[data-kill="resolver"]')?.classList.add("pulse");
+  };
+  tick();
+  countdown = setInterval(tick, 250);
+}
+
+function stopCountdown() {
+  clearInterval(countdown); countdown = null; holdText = "";
+  const el = $("hold-resolver");
+  if (el) el.textContent = "";
+  document.querySelector('[data-kill="resolver"]')?.classList.remove("pulse");
+}
+
+function renderStepper() {
+  if (!visited.length) { $("stepper").innerHTML = '<span class="muted">No ticket yet.</span>'; return; }
+  const last = visited.length - 1, ended = TERMINAL.includes(visited[last]);
+  const bad = ["declined"].includes(visited[last]);
+  let html = visited.map((s, i) => i < last
+    ? `<span class="step done">✓ ${esc(s)}</span>`
+    : `<span class="step cur ${ended ? "final" : ""} ${bad ? "bad" : ""}">${ended ? "ended: " : ""}${esc(s)}</span>`
+  ).join('<span class="sep">›</span>');
+  if (!ended) html += '<span class="sep">›</span><span class="step ghost">…</span>';
+  $("stepper").innerHTML = html;
+}
+
+function renderLegend() {
+  const order = ["msg", "kb", "llm", "intent", "ctx", "order", "ckpt", "policy", "memory", "approve", "human",
+                 "reply", "route", "recv", "acct", "ledger", "refund", "ok", "killed", "restart", "replay", "dedup", "skip"];
+  $("legend").innerHTML = `<dl>${order.map(s => `<dt><span class="chip ${s}">${s}</span></dt><dd>${esc(STEP_INFO[s])}</dd>`).join("")}
+    <dt><span class="line"></span></dt><dd>a handoff: one agent's message to another, over the log</dd>
+    <dt><span class="line resume"></span></dt><dd>resumed: the new process picks up from the checkpoint, not from the top</dd></dl>`;
+}
+
+// ---------------------------------------------------------------- readers
 
 function onEval(m) {
   if (m.ticket !== current) return;
-  const checks = Object.entries(m.checks).map(([k, ok]) =>
-    `<li class="${ok ? "pass" : "fail"}">${ok ? "PASS" : "FAIL"} ${esc(k)}</li>`).join("");
-  const j = m.judge || {};
-  evalHtml = `<ul>${checks}</ul>
-    <div style="margin-top:6px">LLM judge: <b>${esc(j.score ?? "–")}/5</b> <span class="muted">${esc(j.reason || "")}</span></div>
-    <div class="stars" style="margin-top:8px">Customer CSAT: ${[1,2,3,4,5].map(n => `<button class="small" onclick="csat(${n})">${n}</button>`).join(" ")}</div>`;
-  if ($("evals")) $("evals").innerHTML = evalHtml; else refreshReaders();
+  evalResult = m;
+  renderScore();
+  // Memory is written back as the ticket ends: read it again once it has settled.
+  setTimeout(refreshReaders, 800);
+}
+
+function renderScore() {
+  if (!evalResult) return;
+  const checks = Object.entries(evalResult.checks || {});
+  const passed = checks.filter(([, ok]) => ok).length;
+  const j = evalResult.judge || {};
+  const csat = csatScore
+    ? `Rated as the customer: <b>${csatScore}/5</b> <span class="muted">(written to the log, averaged in Analytics)</span>`
+    : `Rate as the customer: ${[1, 2, 3, 4, 5].map(n => `<button class="small" data-csat="${n}" title="${n} out of 5">${n}</button>`).join("")}
+       <span class="muted">(1 poor, 5 great; the rating is written to the log and averaged in Analytics)</span>`;
+  $("score").innerHTML = `
+    ${checks.length ? `<div class="headline ${passed === checks.length ? "pass" : "fail"}">Evals: ${passed}/${checks.length} checks passed</div>` : '<div class="headline">Evals</div>'}
+    <ul>${checks.map(([k, ok]) => `<li class="${ok ? "pass" : "fail"}">${ok ? "✓" : "✗"} ${esc(k)}</li>`).join("")}</ul>
+    <div>LLM judge: <b>${esc(j.score ?? "–")}/5</b> <span class="muted">${esc(j.reason || "")}</span></div>
+    <div class="stars">${csat}</div>`;
+  $("score").hidden = false;
+  $("score").querySelectorAll("[data-csat]").forEach(b => b.onclick = () => csat(Number(b.dataset.csat)));
 }
 
 async function csat(score) {
+  csatScore = score;
+  renderScore();
   await post("/api/csat", {ticket: current, score});
-  evalHtml = evalHtml.replace(/<div class="stars"[\s\S]*$/, `<div class="stars" style="margin-top:8px">Customer CSAT: <b>${score}/5</b> <span class="muted">(on the log, in the analytics)</span></div>`);
-  if ($("evals")) $("evals").innerHTML = evalHtml;
   setTimeout(refreshReaders, 1500);
+}
+
+function card({id, title, tag, sub, value, items = [], noun = "items", body = ""}) {
+  const prev = prevKeys[id];
+  const fresh = prev ? items.filter(i => !prev.has(i.key)).length : 0;
+  const changed = prevVal[id] !== undefined && prevVal[id] !== value;
+  prevKeys[id] = new Set(items.map(i => i.key)); prevVal[id] = value;
+  const lis = items.map(i => `<li class="${prev && !prev.has(i.key) ? "fresh" : ""} ${i.cls || ""}">${i.html}</li>`).join("");
+  return `<div class="card">
+    <h3>${title}${tag ? `<span class="tag">${tag}</span>` : ""}</h3>
+    <div class="value ${changed ? "flash" : ""}">${value}</div>
+    ${sub ? `<div class="sub">${sub}</div>` : ""}${body}
+    ${items.length ? `<details data-id="${id}" ${openCards.has(id) ? "open" : ""}><summary>${items.length} ${noun}${fresh ? `<span class="new">+${fresh} new</span>` : ""}</summary><ul>${lis}</ul></details>` : ""}
+  </div>`;
+}
+
+function sessionFacts(raw) {
+  try {
+    const f = JSON.parse(raw);
+    const parts = [f.intent, f.order && f.order !== "None" ? "order " + f.order : null,
+                   f.amount_cents ? "$" + (f.amount_cents / 100).toFixed(2) : null].filter(Boolean);
+    return parts.length ? parts.join(" · ") : "–";
+  } catch { return raw || "–"; }
 }
 
 async function refreshReaders() {
   if (!current) return;
-  const r = await fetch("/api/readers?ticket=" + current).then(r => r.json());
+  const t = current;
+  let r;
+  try { r = await fetch("/api/readers?ticket=" + t).then(r => r.json()); } catch { return; }
+  if (t !== current) return;
   const a = r.analytics || {};
-  const evalsHtml = evalHtml || '<span class="muted">When the ticket closes.</span>';
   const avg = a.csat ? Number(a.csat.avg) : NaN;
   const csatAvg = a.csat && a.csat.avg !== null && Number.isFinite(avg)
     ? `${avg.toFixed(2)} from ${a.csat.count} rating${a.csat.count === "1" ? "" : "s"}` : "no ratings yet";
-  $("readers").innerHTML = `
-    <div class="reader"><h3>Memory <span class="tag">primitive</span></h3>
-      <div class="muted" style="font-size:12px">customer history, durable, written back after each ticket</div>
-      <ul>${(r.memory || []).map(n => `<li>${esc(n)}</li>`).join("")}</ul>
-      <div class="muted" style="font-size:12px;margin-top:4px">session memory: ${esc(r.session_memory || "–")}</div></div>
-    <div class="reader"><h3>Context <span class="tag">primitive</span></h3>
-      <div class="muted" style="font-size:12px">assembled per turn, ${(r.context || []).length} turns</div>
-      <ul>${(r.context || []).slice(-6).map(t => `<li><span class="muted">${esc(t.kind)}</span> ${esc(t.text.slice(0, 160))}</li>`).join("")}</ul></div>
-    <div class="reader"><h3>State <span class="tag">primitive</span></h3>
-      ticket status in KV: <b>${esc(r.state || "–")}</b></div>
-    <div class="reader"><h3>Analytics <span class="tag">service</span></h3>
-      <ul><li>resolution: ${a.resolution_seconds ?? "–"}s</li>
-      <li>steps per agent: ${esc((a.steps_per_agent || []).map(x => x.agent + " " + x.count).join(", "))}</li>
-      <li>CSAT average: ${esc(csatAvg)}</li>
-      <li>status changes: ${esc((a.status_changes || []).map(x => x.status + " " + x.count).join(", "))}</li></ul>
-      ${a.error ? `<div class="fail">${esc(a.error)}</div>` : ""}</div>
-    <div class="reader"><h3>Observability <span class="tag">service</span></h3>
-      ${current_trace ? `<a href="${config.jaeger}/trace/${current_trace}" target="_blank">Open this ticket's trace in Jaeger</a>` : '<span class="muted">tracing off</span>'}</div>
-    <div class="reader"><h3>Evals</h3><div id="evals">${evalsHtml}</div></div>`;
+  const steps = (a.steps_per_agent || []).slice()
+    .sort((x, y) => (LANES.indexOf(x.agent) + 1 || 9) - (LANES.indexOf(y.agent) + 1 || 9));
+  const context = r.context || [];
+  const memory = (r.memory || []).slice().reverse();
+  $("readers").innerHTML = [
+    card({id: "state", title: "State", tag: "primitive", value: esc(r.state || "–"), sub: "ticket status, read from KV"}),
+    card({id: "memory", title: "Memory", tag: "primitive", value: esc(sessionFacts(r.session_memory)),
+          sub: "session memory for this ticket; below, customer history, durable, written back after each ticket",
+          noun: "recent history notes",
+          items: memory.map(n => {
+            const mine = n.includes(t.slice(0, 12));
+            return {key: n, cls: mine ? "this" : "", html: esc(n) + (mine ? ' <span class="badge">this ticket</span>' : "")};
+          })}),
+    card({id: "context", title: "Context", tag: "primitive", value: `${context.length} turn${context.length === 1 ? "" : "s"}`,
+          sub: "assembled per turn and fed to the LLM", noun: "turns",
+          items: context.slice(-12).map((c, i) => ({key: context.length - 12 + i + c.kind,
+            html: `<span class="kind">${esc(c.kind)}</span>${esc(c.text.slice(0, 220))}`}))}),
+    card({id: "analytics", title: "Analytics", tag: "service",
+          value: a.resolution_seconds != null ? `${a.resolution_seconds}s to resolve` : "resolving…",
+          body: `<div class="split">
+            <div><div class="k">This ticket</div>steps: ${esc(steps.map(x => x.agent + " " + x.count).join(" · ") || "–")}</div>
+            <div><div class="k">All tickets</div>CSAT average: ${esc(csatAvg)}<br>
+              <span class="muted">status changes: ${esc((a.status_changes || []).map(x => x.status + " " + x.count).join(", ") || "–")}</span></div>
+          </div>${a.error ? `<div class="fail">${esc(a.error)}</div>` : ""}`}),
+    card({id: "obs", title: "Observability", tag: "service",
+          value: currentTrace && config.jaeger
+            ? `<a href="${esc(config.jaeger)}/trace/${esc(currentTrace)}" target="_blank" rel="noopener">Open this ticket's trace in Jaeger</a>`
+            : '<span class="muted">tracing off</span>',
+          sub: "one trace per ticket, across all three processes"}),
+  ].join("");
 }
 
-let current_trace = null;
-async function send() {
-  const scenario = $("scenario").value;
-  const text = $("text").value.trim();
-  if (!text && !scenario) return;
-  sending = true;
-  const r = await post("/api/ticket", {scenario, text});
-  sending = false;
-  if (r.error) return alert(r.error);
-  sawCustomer = true;
-  current = r.ticket;
-  current_trace = r.trace;
-  evalHtml = "";
-  $("ticket").textContent = "· ticket " + current.slice(0, 12);
-  $("chat").innerHTML = "";
-  $("detail").innerHTML = '<span class="muted">Click a step to see what happened.</span>';
-  $("readers").innerHTML = "";
-  buildLanes();
-  say("customer", r.text, "customer");
-  $("st-open")?.classList.add("on");
-  $("text").value = "";
+// ---------------------------------------------------------------- chrome
+
+function applyPrefs() {
+  const light = store.get("desk.theme") === "light";
+  if (light) document.documentElement.dataset.theme = "light";
+  else document.documentElement.removeAttribute("data-theme");
+  $("theme").textContent = light ? "Dark theme" : "Light theme";
+  const present = store.get("desk.present") === "1";
+  document.documentElement.classList.toggle("present", present);
+  $("present").classList.toggle("on", present);
+  scheduleLinks();
+  setTimeout(() => { $("chat").scrollTop = $("chat").scrollHeight; following = true; followLog(); }, 50);
 }
 
-async function kill(agent) {
-  await post("/api/kill", {agent, ticket: current});
+async function loadLogo() {
+  try {
+    const svg = await fetch("/static/ld-logo.svg").then(r => r.ok ? r.text() : Promise.reject(r.status));
+    if (svg.trim().startsWith("<svg")) $("logo").innerHTML = svg.replace(/<title>[\s\S]*?<\/title>/, "");
+  } catch {}  // the text wordmark stays
 }
 
 async function init() {
+  applyPrefs();
+  loadLogo();
+  renderHeads(); renderLegend();
+  $("present").onclick = () => { store.set("desk.present", document.documentElement.classList.contains("present") ? "0" : "1"); applyPrefs(); };
+  $("theme").onclick = () => {
+    store.set("desk.theme", store.get("desk.theme") === "light" ? "dark" : "light");
+    applyPrefs();
+  };
+  $("more").onclick = (ev) => {
+    ev.stopPropagation();
+    $("menu-list").hidden = !$("menu-list").hidden;
+    $("more").setAttribute("aria-expanded", String(!$("menu-list").hidden));
+  };
+  $("keybtn").onclick = (ev) => {
+    ev.stopPropagation();
+    $("legend").hidden = !$("legend").hidden;
+    $("keybtn").setAttribute("aria-expanded", String(!$("legend").hidden));
+  };
+  document.addEventListener("click", (ev) => {
+    if (!$("menu-list").contains(ev.target)) { $("menu-list").hidden = true; $("more").setAttribute("aria-expanded", "false"); }
+    if (!$("legend").contains(ev.target)) { $("legend").hidden = true; $("keybtn").setAttribute("aria-expanded", "false"); }
+  });
+  $("heads").onclick = (ev) => {
+    const b = ev.target.closest("[data-kill]");
+    if (b) post("/api/kill", {agent: b.dataset.kill, ticket: current});
+  };
+  $("readers").addEventListener("toggle", (ev) => {
+    const id = ev.target.dataset?.id;
+    if (id) ev.target.open ? openCards.add(id) : openCards.delete(id);
+  }, true);
+  window.addEventListener("resize", scheduleLinks);
+  new ResizeObserver(scheduleLinks).observe($("tl-rows"));
+  // Only a person scrolling decides whether the log follows; our own scrolling does not.
+  for (const type of ["wheel", "touchmove", "keydown"]) $("tl").addEventListener(type, () => setTimeout(onLogScrolled, 60), {passive: true});
+  $("tl").addEventListener("mousedown", () => $("tl").addEventListener("mouseup", () => setTimeout(onLogScrolled, 60), {once: true}));
+  $("tl-more").onclick = () => { following = true; followLog(); };
+
   config = await fetch("/api/config").then(r => r.json());
-  pids = config.pids || {};
+  Object.assign(pids, config.pids || {});
+  renderHeads();
   $("pause").textContent = config.pause;
   $("pausenote").hidden = !(parseFloat(config.pause) > 0);
+  $("nopause").hidden = !$("pausenote").hidden;
   $("meta").textContent = `LLM: ${config.llm} · memory: ${config.memory.kb} KB notes, ${config.memory.history} customer history`;
-  $("scenario").innerHTML = `<option value="">Type your own message</option>` +
-    Object.entries(config.scenarios).map(([k, v]) => `<option value="${k}">${k}: ${esc(v.about)}</option>`).join("");
-  $("scenario").onchange = () => { const s = config.scenarios[$("scenario").value]; $("text").value = s ? s.message : ""; };
-  $("send").onclick = send;
+  $("scenarios").innerHTML = Object.entries(config.scenarios).map(([k, v]) =>
+    `<button data-s="${esc(k)}" title="${esc(v.about)}">${esc(k)}</button>`).join("");
+  $("scenarios").onclick = (ev) => {
+    const b = ev.target.closest("[data-s]");
+    if (b) send(b.dataset.s, config.scenarios[b.dataset.s].message);
+  };
+  $("send").onclick = () => send("", $("text").value.trim());
+  $("text").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("send").click(); }
+  });
   $("clearmem").onclick = async () => {
+    $("menu-list").hidden = true;
     if (!confirm("Forget all customer history? The knowledge base is kept.")) return;
     const r = await post("/api/clear-memory", {});
     $("meta").textContent = `LLM: ${config.llm} · memory cleared: ${r.forgotten} notes forgotten, ${r.history} customer history now`;
     refreshReaders();
   };
   $("reset").onclick = async () => {
+    $("menu-list").hidden = true;
     if (!confirm("Start from clean demo data? Orders go back to their configured state and customer history starts fresh.")) return;
     const r = await post("/api/reset", {});
     $("meta").textContent = `LLM: ${config.llm} · memory: ${r.kb} KB notes, ${r.history} customer history (reset)`;
   };
-  buildLanes();
+
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
   ws.onmessage = (msg) => {
     const m = JSON.parse(msg.data);
-    if (m.type === "event") onEvent(m);
+    if (m.type === "event") {
+      recent.push(m);
+      if (recent.length > 300) recent.shift();
+      onEvent(m);
+    }
     else if (m.type === "agent") onAgent(m);
     else if (m.type === "approval") onApproval(m);
+    else if (m.type === "approval_done") closeApproval(m.id, m.decision);
     else if (m.type === "eval") onEval(m);
-    else if (m.type === "hello") { Object.assign(pids, m.pids); buildLanes(); }
+    else if (m.type === "hello") { Object.assign(pids, m.pids); renderHeads(); }
   };
-  ws.onclose = () => { $("meta").textContent = "disconnected: reload the page"; };
+  ws.onclose = () => { $("meta").innerHTML = '<span class="fail">Disconnected from the desk server: reload the page</span>'; };
 }
 init();
 </script>

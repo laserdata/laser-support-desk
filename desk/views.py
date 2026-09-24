@@ -25,8 +25,15 @@ class EventTail:
             pass
 
     async def run(self) -> None:
+        # One bad poll or handler must not stop the tail: everything that reads
+        # the log through it (the browser, the evals) would go quiet for good.
         while True:
-            messages = await self.cursor.poll()
+            try:
+                messages = await self.cursor.poll()
+            except Exception as error:  # noqa: BLE001
+                print(f"  event tail: poll failed, retrying: {error!r}", flush=True)
+                await asyncio.sleep(1)
+                continue
             if not messages:
                 await asyncio.sleep(0.05)
                 continue
@@ -38,9 +45,12 @@ class EventTail:
                 if not isinstance(record, dict):
                     continue
                 self.by_ticket.setdefault(record.get("ticket", "-"), []).append(record)
-                result = self.on_event(record)
-                if asyncio.iscoroutine(result):
-                    await result
+                try:
+                    result = self.on_event(record)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as error:  # noqa: BLE001
+                    print(f"  event tail: handler failed on {record.get('step')}: {error!r}", flush=True)
 
 
 async def readers(desk: Desk, t: str) -> dict:
@@ -118,7 +128,13 @@ async def evaluate(desk: Desk, t: str, events: list[dict], text: str,
         how = "resumed from checkpoint" if "replay" in steps else "restarted from the top"
         checks[f"recovered after the kill ({how})"] = final in C.TERMINAL
     checks["customer got replies"] = len(replies) >= 2
-    recent = await desk.history_recent(20)
+    # The note is written before the last step, but recall catches up a moment
+    # later: give it a few seconds before calling it missing.
+    for _ in range(10):
+        recent = await desk.history_recent(20)
+        if any(t[:12] in note for note in recent):
+            break
+        await asyncio.sleep(0.5)
     checks["resolution written back to memory"] = any(t[:12] in note for note in recent)
 
     judge = await desk.think_json(t, (
