@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support Desk on Laser SDK</title>
+<style>
+  :root {
+    --bg: #0a1020; --panel: #111a2e; --panel2: #0d1526; --line: #22304d; --text: #dfe7f5;
+    --muted: #8796b3; --green: #7cf29a; --blue: #5aa9ff; --red: #ff5a6a; --amber: #ffb84d;
+    --violet: #c792ff; --cyan: #5fd7e8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+         font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; overflow: hidden; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 8px 14px; flex: none; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 17px; font-weight: 600; }
+  header h1 b { color: var(--green); }
+  header .meta { color: var(--muted); font-size: 12px; }
+  /* Fit the window: every column scrolls on its own, the page never does. */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 26%) 1fr minmax(260px, 28%);
+         gap: 10px; padding: 10px 14px; }
+  @media (max-width: 900px) { body { overflow: auto; } main { grid-template-columns: 1fr; } .panel { max-height: 80vh; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+  #lanes { flex: 1; min-height: 0; overflow-y: auto; }
+  #readers { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+  .panel h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  /* chat */
+  #chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+  .msg { padding: 8px 10px; border-radius: 10px; max-width: 92%; white-space: pre-wrap; }
+  .msg.customer { align-self: flex-end; background: #1d3b2b; border: 1px solid #2c5a41; }
+  .msg.agent { align-self: flex-start; background: var(--panel2); border: 1px solid var(--line); }
+  .msg .who { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .approval { border: 1px solid var(--amber); background: #2a2210; border-radius: 10px; padding: 10px; }
+  .approval .row { display: flex; gap: 8px; margin-top: 8px; }
+  textarea, select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
+  textarea { height: 54px; resize: vertical; margin-top: 6px; }
+  button { background: #1b2a47; color: var(--text); border: 1px solid #2d4270; border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--blue); }
+  button.primary { background: #1f5134; border-color: #2f7a4e; }
+  button.danger { background: #3b1a22; border-color: #7a2f3d; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  .composer { margin-top: 8px; flex: none; }
+  .composer .row { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+  /* lanes */
+  .status { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; flex: none; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.on { color: var(--bg); background: var(--green); border-color: var(--green); }
+  .lane { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: start; padding: 6px 0; border-top: 1px dashed var(--line); }
+  .lane:first-of-type { border-top: 0; }
+  .agent { display: flex; flex-direction: column; gap: 6px; }
+  .agent .name { font-weight: 600; }
+  .agent .pid { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  .agent .pid.dead { color: var(--red); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { font: 12px ui-monospace, Menlo, monospace; padding: 3px 7px; border-radius: 6px; background: #13213d; border: 1px solid #294069; cursor: pointer; }
+  .chip.llm { background: #172a1f; border-color: #2c6b45; color: var(--green); }
+  .chip.ckpt { border-style: dashed; border-color: var(--cyan); color: var(--cyan); }
+  .chip.crash, .chip.killed { background: #3b1a22; border-color: var(--red); color: var(--red); }
+  .chip.replay { border-color: var(--amber); color: var(--amber); }
+  .chip.refund { background: var(--green); color: var(--bg); border-color: var(--green); font-weight: 700; }
+  .chip.dedup { border-color: var(--violet); color: var(--violet); }
+  .chip.human, .chip.approve { border-color: var(--amber); color: var(--amber); }
+  .chip.sel { outline: 2px solid var(--blue); }
+  #detail { margin-top: 8px; flex: none; max-height: 22vh; overflow-y: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 48px; font-size: 12.5px; white-space: pre-wrap; }
+  #detail .k { color: var(--muted); font-size: 11px; }
+  .legend { flex: none; padding-top: 8px; color: var(--muted); font-size: 11px; }
+  /* readers */
+  .reader { border-top: 1px solid var(--line); padding: 8px 0; }
+  .reader:first-of-type { border-top: 0; padding-top: 0; }
+  .reader h3 { margin: 0 0 4px; font-size: 12px; color: var(--blue); font-weight: 600; }
+  .reader .tag { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  .reader ul { margin: 0; padding-left: 16px; }
+  .reader li { margin: 2px 0; font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .pass { color: var(--green); } .fail { color: var(--red); }
+  .stars button { padding: 3px 9px; }
+  a { color: var(--blue); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agents fail. <b>Their sessions shouldn't.</b></h1>
+  <span class="meta" id="meta">connecting…</span>
+  <button class="small" id="clearmem" style="margin-left:auto" title="Forget all customer history, then reseed the starting notes">Clear memory</button>
+  <button class="small" id="reset" title="Orders back to the configured data, and customer history cleared">Reset demo data</button>
+</header>
+<main>
+  <section class="panel">
+    <h2>Customer chat</h2>
+    <div id="chat"><div class="muted">Pick a scenario or type a message to open a ticket.</div></div>
+    <div class="composer">
+      <select id="scenario"></select>
+      <textarea id="text" placeholder="Customer message"></textarea>
+      <div class="row"><button class="primary" id="send">Send</button></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Durable session log <span class="muted" id="ticket"></span></h2>
+    <div class="status" id="status"></div>
+    <div id="lanes"></div>
+    <div id="detail"><span class="muted">Click a step to see what happened.</span></div>
+    <div class="legend">Each agent is its own process. <b>Kill</b> sends SIGKILL; the supervisor starts a new one, the log redelivers what was unfinished, and a resolver killed after its checkpoint resumes from it.<span id="pausenote" hidden> The resolver holds for <span id="pause">0</span>s at the policy step so there is time to kill it mid-case.</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>One log, many readers</h2>
+    <div id="readers" class="muted">Readers appear once a ticket is open.</div>
+  </section>
+</main>
+<script>
+const LANES = ["triage", "resolver", "billing"];
+const STATUSES = ["open", "triaged", "resolving", "awaiting approval", "refunded", "answered", "closed", "declined"];
+let current = null, config = null, refreshTimer = null, pids = {}, evalHtml = "", sending = false, sawCustomer = false;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const post = (url, body) => fetch(url, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)}).then(r => r.json());
+
+function buildLanes() {
+  $("lanes").innerHTML = LANES.map(name => `
+    <div class="lane">
+      <div class="agent">
+        <span class="name">${name}</span>
+        <span class="pid" id="pid-${name}">${pids[name] ? "pid " + pids[name] : "starting…"}</span>
+        <button class="small danger" onclick="kill('${name}')">Kill ${name}</button>
+      </div>
+      <div class="chips" id="lane-${name}"></div>
+    </div>`).join("");
+  $("status").innerHTML = STATUSES.map(s => `<span class="pill" id="st-${s.replace(/ /g, "-")}">${s}</span>`).join("");
+}
+
+function chip(lane, step, text, extraClass) {
+  const el = document.createElement("span");
+  el.className = `chip ${step} ${extraClass || ""}`;
+  el.textContent = step;
+  el.title = text || "";
+  el.onclick = () => {
+    document.querySelectorAll(".chip.sel").forEach(c => c.classList.remove("sel"));
+    el.classList.add("sel");
+    $("detail").innerHTML = `<div class="k">${esc(lane)} · ${esc(step)}</div>${esc(text || "(no detail)")}`;
+  };
+  $("lane-" + lane)?.appendChild(el);
+}
+
+function say(who, text, cls) {
+  const chat = $("chat");
+  if (chat.querySelector(".muted")) chat.innerHTML = "";
+  const el = document.createElement("div");
+  el.className = "msg " + cls;
+  el.innerHTML = `<span class="who">${esc(who)}</span>${esc(text)}`;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+  return el;
+}
+
+function adopt(ticket) {
+  // A ticket opened somewhere else (python -m desk.run): follow it.
+  current = ticket; current_trace = null; evalHtml = ""; sawCustomer = false;
+  $("ticket").textContent = "· ticket " + current.slice(0, 12) + " (opened from the CLI)";
+  $("chat").innerHTML = "";
+  $("detail").innerHTML = '<span class="muted">Click a step to see what happened.</span>';
+  $("readers").innerHTML = "";
+  buildLanes();
+}
+
+function onEvent(e) {
+  if (e.agent === "desk" && e.step === "status" && e.status === "open" && e.ticket !== current && !sending) adopt(e.ticket);
+  if (e.ticket !== current) return;
+  if (e.agent === "triage" && e.step === "msg" && !sawCustomer) { sawCustomer = true; say("customer", e.text, "customer"); }
+  if (e.agent === "evals" && e.step === "eval" && !evalHtml.includes("<ul>")) {
+    evalHtml = `<div>LLM judge: <b>${esc(e.score ?? "–")}/5</b> <span class="muted">${esc(e.text || "")}</span></div>`;
+    if ($("evals")) $("evals").innerHTML = evalHtml;
+  }
+  if (e.step === "status") {
+    document.querySelectorAll(".pill").forEach(p => p.classList.remove("on"));
+    $("st-" + String(e.status).replace(/ /g, "-"))?.classList.add("on");
+  } else if (e.agent === "supervisor" && e.step === "killed") {
+    chip(e.target, "killed", e.text);
+  } else if (LANES.includes(e.agent)) {
+    chip(e.agent, e.step, e.text);
+    if (e.step === "reply" || e.step === "ok") say(e.agent, e.text, "agent");
+  }
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(refreshReaders, 700);
+}
+
+function onAgent(m) {
+  pids[m.name] = m.state === "started" ? m.pid : null;
+  const el = $("pid-" + m.name);
+  if (!el) return;
+  if (m.state === "started") { el.textContent = "pid " + m.pid; el.classList.remove("dead"); }
+  else { el.textContent = `pid ${m.pid} ${m.state}`; el.classList.add("dead"); }
+}
+
+function onApproval(m) {
+  if (m.ticket !== current) return;
+  const el = say("resolver asks a human", m.text, "agent approval");
+  el.id = "ap-" + m.id;
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<button class="primary">Approve</button><button class="danger">Decline</button>`;
+  row.children[0].onclick = () => decide(m.id, "approved");
+  row.children[1].onclick = () => decide(m.id, "declined");
+  el.appendChild(row);
+}
+
+async function decide(id, decision) {
+  await post("/api/approve", {id, decision});
+  const el = $("ap-" + id);
+  if (el) el.querySelector(".row").innerHTML = `<span class="muted">${decision}</span>`;
+}
+
+function onEval(m) {
+  if (m.ticket !== current) return;
+  const checks = Object.entries(m.checks).map(([k, ok]) =>
+    `<li class="${ok ? "pass" : "fail"}">${ok ? "PASS" : "FAIL"} ${esc(k)}</li>`).join("");
+  const j = m.judge || {};
+  evalHtml = `<ul>${checks}</ul>
+    <div style="margin-top:6px">LLM judge: <b>${esc(j.score ?? "–")}/5</b> <span class="muted">${esc(j.reason || "")}</span></div>
+    <div class="stars" style="margin-top:8px">Customer CSAT: ${[1,2,3,4,5].map(n => `<button class="small" onclick="csat(${n})">${n}</button>`).join(" ")}</div>`;
+  if ($("evals")) $("evals").innerHTML = evalHtml; else refreshReaders();
+}
+
+async function csat(score) {
+  await post("/api/csat", {ticket: current, score});
+  evalHtml = evalHtml.replace(/<div class="stars"[\s\S]*$/, `<div class="stars" style="margin-top:8px">Customer CSAT: <b>${score}/5</b> <span class="muted">(on the log, in the analytics)</span></div>`);
+  if ($("evals")) $("evals").innerHTML = evalHtml;
+  setTimeout(refreshReaders, 1500);
+}
+
+async function refreshReaders() {
+  if (!current) return;
+  const r = await fetch("/api/readers?ticket=" + current).then(r => r.json());
+  const a = r.analytics || {};
+  const evalsHtml = evalHtml || '<span class="muted">When the ticket closes.</span>';
+  const avg = a.csat ? Number(a.csat.avg) : NaN;
+  const csatAvg = a.csat && a.csat.avg !== null && Number.isFinite(avg)
+    ? `${avg.toFixed(2)} from ${a.csat.count} rating${a.csat.count === "1" ? "" : "s"}` : "no ratings yet";
+  $("readers").innerHTML = `
+    <div class="reader"><h3>Memory <span class="tag">primitive</span></h3>
+      <div class="muted" style="font-size:12px">customer history, durable, written back after each ticket</div>
+      <ul>${(r.memory || []).map(n => `<li>${esc(n)}</li>`).join("")}</ul>
+      <div class="muted" style="font-size:12px;margin-top:4px">session memory: ${esc(r.session_memory || "–")}</div></div>
+    <div class="reader"><h3>Context <span class="tag">primitive</span></h3>
+      <div class="muted" style="font-size:12px">assembled per turn, ${(r.context || []).length} turns</div>
+      <ul>${(r.context || []).slice(-6).map(t => `<li><span class="muted">${esc(t.kind)}</span> ${esc(t.text.slice(0, 160))}</li>`).join("")}</ul></div>
+    <div class="reader"><h3>State <span class="tag">primitive</span></h3>
+      ticket status in KV: <b>${esc(r.state || "–")}</b></div>
+    <div class="reader"><h3>Analytics <span class="tag">service</span></h3>
+      <ul><li>resolution: ${a.resolution_seconds ?? "–"}s</li>
+      <li>steps per agent: ${esc((a.steps_per_agent || []).map(x => x.agent + " " + x.count).join(", "))}</li>
+      <li>CSAT average: ${esc(csatAvg)}</li>
+      <li>status changes: ${esc((a.status_changes || []).map(x => x.status + " " + x.count).join(", "))}</li></ul>
+      ${a.error ? `<div class="fail">${esc(a.error)}</div>` : ""}</div>
+    <div class="reader"><h3>Observability <span class="tag">service</span></h3>
+      ${current_trace ? `<a href="${config.jaeger}/trace/${current_trace}" target="_blank">Open this ticket's trace in Jaeger</a>` : '<span class="muted">tracing off</span>'}</div>
+    <div class="reader"><h3>Evals</h3><div id="evals">${evalsHtml}</div></div>`;
+}
+
+let current_trace = null;
+async function send() {
+  const scenario = $("scenario").value;
+  const text = $("text").value.trim();
+  if (!text && !scenario) return;
+  sending = true;
+  const r = await post("/api/ticket", {scenario, text});
+  sending = false;
+  if (r.error) return alert(r.error);
+  sawCustomer = true;
+  current = r.ticket;
+  current_trace = r.trace;
+  evalHtml = "";
+  $("ticket").textContent = "· ticket " + current.slice(0, 12);
+  $("chat").innerHTML = "";
+  $("detail").innerHTML = '<span class="muted">Click a step to see what happened.</span>';
+  $("readers").innerHTML = "";
+  buildLanes();
+  say("customer", r.text, "customer");
+  $("st-open")?.classList.add("on");
+  $("text").value = "";
+}
+
+async function kill(agent) {
+  await post("/api/kill", {agent, ticket: current});
+}
+
+async function init() {
+  config = await fetch("/api/config").then(r => r.json());
+  pids = config.pids || {};
+  $("pause").textContent = config.pause;
+  $("pausenote").hidden = !(parseFloat(config.pause) > 0);
+  $("meta").textContent = `LLM: ${config.llm} · memory: ${config.memory.kb} KB notes, ${config.memory.history} customer history`;
+  $("scenario").innerHTML = `<option value="">Type your own message</option>` +
+    Object.entries(config.scenarios).map(([k, v]) => `<option value="${k}">${k}: ${esc(v.about)}</option>`).join("");
+  $("scenario").onchange = () => { const s = config.scenarios[$("scenario").value]; $("text").value = s ? s.message : ""; };
+  $("send").onclick = send;
+  $("clearmem").onclick = async () => {
+    if (!confirm("Forget all customer history? The knowledge base is kept.")) return;
+    const r = await post("/api/clear-memory", {});
+    $("meta").textContent = `LLM: ${config.llm} · memory cleared: ${r.forgotten} notes forgotten, ${r.history} customer history now`;
+    refreshReaders();
+  };
+  $("reset").onclick = async () => {
+    if (!confirm("Start from clean demo data? Orders go back to their configured state and customer history starts fresh.")) return;
+    const r = await post("/api/reset", {});
+    $("meta").textContent = `LLM: ${config.llm} · memory: ${r.kb} KB notes, ${r.history} customer history (reset)`;
+  };
+  buildLanes();
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onmessage = (msg) => {
+    const m = JSON.parse(msg.data);
+    if (m.type === "event") onEvent(m);
+    else if (m.type === "agent") onAgent(m);
+    else if (m.type === "approval") onApproval(m);
+    else if (m.type === "eval") onEval(m);
+    else if (m.type === "hello") { Object.assign(pids, m.pids); buildLanes(); }
+  };
+  ws.onclose = () => { $("meta").textContent = "disconnected: reload the page"; };
+}
+init();
+</script>
+</body>
+</html>
