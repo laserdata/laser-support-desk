@@ -1,7 +1,8 @@
 """The chaos monkey: SIGKILLs a random agent at random intervals, so crash and
 resume happens without anyone pressing Kill. It goes through the supervisor
 like any other kill; on_kill(name, pid) puts the kill on the log, so the
-timeline and the evals see it."""
+timeline and the evals see it. may_kill() lets the caller hold it off, as the
+demo loop does between tickets."""
 
 from __future__ import annotations
 
@@ -19,9 +20,11 @@ KILLABLE = ("triage", "resolver", "billing")
 
 class ChaosMonkey:
     def __init__(self, supervisor: Supervisor, agents: list[str] | None = None,
-                 min_s: float | None = None, max_s: float | None = None, on_kill=None) -> None:
+                 min_s: float | None = None, max_s: float | None = None, on_kill=None,
+                 may_kill=None) -> None:
         self.supervisor = supervisor
         self.on_kill = on_kill
+        self.may_kill = may_kill or (lambda: True)
         self.agents = [a for a in (agents or C.CHAOS_AGENTS) if a in KILLABLE and a in supervisor.agents]
         self.min_s = C.CHAOS_MIN if min_s is None else min_s
         self.max_s = max(self.min_s, C.CHAOS_MAX if max_s is None else max_s)
@@ -34,6 +37,8 @@ class ChaosMonkey:
     async def _run(self) -> None:
         while True:
             await asyncio.sleep(random.uniform(self.min_s, self.max_s))
+            if not self.may_kill():
+                continue
             alive = [a for a in self.agents if self.supervisor.pid(a)]
             if not alive:
                 continue

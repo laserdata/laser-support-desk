@@ -51,6 +51,7 @@ class App:
         self.tickets: dict[str, dict] = {}
         self.pending: dict[str, dict] = {}
         self.pids: dict[str, int | None] = {}
+        self.demo = DemoLoop(self)
 
     async def broadcast(self, message: dict) -> None:
         data = json.dumps(message, default=str)
@@ -78,14 +79,13 @@ class App:
                "DESK_POLICY_PAUSE": os.environ.get("DESK_POLICY_PAUSE", "0")}
         self.supervisor = Supervisor(AGENTS, env, self.on_agent)
         await self.supervisor.start()
-        self.chaos = ChaosMonkey(self.supervisor, on_kill=self.on_chaos)
+        self.chaos = ChaosMonkey(self.supervisor, on_kill=self.on_chaos, may_kill=self.chaos_may_kill)
         if C.CHAOS:
             self.chaos.start()
         # The human in the loop: approval requests land here and wait for a click.
         self.human = self.laser.spawn_agent("human", ls.Topics.HUMAN_INPUT, self.on_approval,
                                             poll_interval_ms=20)
         await self.human.ready()
-        self.demo = DemoLoop(self)
         if C.DEMO:
             self.demo.start()
         print(f"  LLM: {self.desk.llm.name}{', demo loop on' if C.DEMO else ''}. Open http://localhost:{os.environ.get('DESK_PORT', '8000')}")
@@ -131,6 +131,13 @@ class App:
     async def on_agent(self, name: str, state: str, pid: int, code=None) -> None:
         self.pids[name] = pid if state == "started" else None
         await self.broadcast({"type": "agent", "name": name, "state": state, "pid": pid, "code": code})
+
+    def chaos_may_kill(self) -> bool:
+        """In the demo loop, only while a ticket is in flight: a kill in the
+        pause between tickets shows nothing but a restart."""
+        if not self.demo.running:
+            return True
+        return any(not info.get("evaluated") for info in self.tickets.values())
 
     async def on_chaos(self, name: str, pid: int) -> None:
         """A chaos kill goes on the log like a Kill click, against the newest open ticket."""

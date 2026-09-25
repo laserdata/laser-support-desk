@@ -59,7 +59,7 @@ For a booth or a screen that runs unattended:
 DESK_DEMO=1 python -m desk.server
 ```
 
-It runs every scenario in turn, forever. Approvals decide themselves after a few seconds by the desk's limit (approve up to $200, decline over it); anyone who clicks first decides instead. Each ticket is followed by a pause, and the demo data (orders, customer history) is reset at the start of every round. The agents run on the mock LLM, slowed to about a second a call so people can follow the timeline. The **Demo loop** button in the header starts and stops it on a running server; sending a ticket yourself stops it. Add `DESK_CHAOS=1` to have agents killed along the way.
+It runs every scenario in turn, forever. Approvals decide themselves after a few seconds by the desk's limit (approve up to $200, decline over it); anyone who clicks first decides instead. Each ticket is followed by a pause, and the demo data (orders, customer history) is reset at the start of every round. The agents run on the mock LLM, slowed to about a second a call so people can follow the timeline. The **Demo loop** button in the header starts and stops it on a running server; sending a ticket yourself stops it. Add `DESK_CHAOS=1` to have agents killed along the way; in the demo loop it only kills while a ticket is in flight, never in the pause between tickets.
 
 ## Without a browser
 
