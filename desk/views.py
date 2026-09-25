@@ -20,9 +20,19 @@ class EventTail:
         self.on_event = on_event
         self.by_ticket: dict[str, list[dict]] = {}
 
-    async def skip_history(self) -> None:
-        while await self.cursor.poll():
-            pass
+    async def skip_history(self, keep: set[str] | frozenset = frozenset()) -> None:
+        """Move to the end of the log, keeping the past events of the tickets in
+        `keep` (tickets still open when the server restarted)."""
+        while messages := await self.cursor.poll():
+            for message in messages:
+                if not keep:
+                    break
+                try:
+                    record = message.json()
+                except ls.CodecError:
+                    continue
+                if isinstance(record, dict) and record.get("ticket") in keep:
+                    self.by_ticket.setdefault(record["ticket"], []).append(record)
 
     async def run(self) -> None:
         # One bad poll or handler must not stop the tail: everything that reads
@@ -56,8 +66,9 @@ class EventTail:
 async def readers(desk: Desk, t: str) -> dict:
     """Everything reading the same stream, for one ticket."""
     session = desk.sessions.open(t)
-    out: dict = {}
-    out["memory"] = await desk.history_recent(4)
+    customer = await desk.get_customer(t)
+    out: dict = {"customer": customer}
+    out["memory"] = await desk.history_recent(customer, 4)
     facts = [item.text for item in await session.memory().recall(limit=3)]
     out["session_memory"] = facts[-1] if facts else None
     turns = await session.context()
@@ -110,7 +121,9 @@ async def evaluate(desk: Desk, t: str, events: list[dict], text: str,
     steps = [e["step"] for e in events]
     replies = [e.get("text", "") for e in events if e["step"] in ("reply", "ok")]
     final = await desk.get_status(t)
-    refunds = [e for e in events if e["step"] == "refund"]
+    # A billing killed between announcing a refund and marking it done
+    # announces it again on redelivery: count refunds by key, not by event.
+    refunds = list({e.get("key") or id(e): e for e in events if e["step"] == "refund"}.values())
     checks: dict[str, bool] = {}
     if expect:
         status, cents = expect
@@ -130,8 +143,9 @@ async def evaluate(desk: Desk, t: str, events: list[dict], text: str,
     checks["customer got replies"] = len(replies) >= 2
     # The note is written before the last step, but recall catches up a moment
     # later: give it a few seconds before calling it missing.
+    customer = await desk.get_customer(t)
     for _ in range(10):
-        recent = await desk.history_recent(20)
+        recent = await desk.history_recent(customer, 20)
         if any(t[:12] in note for note in recent):
             break
         await asyncio.sleep(0.5)

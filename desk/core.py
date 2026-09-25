@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import threading
 import time
 
@@ -113,6 +114,33 @@ def bag_of_words(text: str) -> list[float]:
     return [v / norm for v in vector] if norm else vector
 
 
+async def cas_update(kv, key: str, change):
+    """Read a JSON value, change it, and write it back only if nobody else wrote
+    in between; if they did, read again and retry. change(value) returns the new
+    value, or None to leave it as it is. Returns the value as it now stands."""
+    while True:
+        entry = await kv.get_entry(key)
+        current = entry.json() if entry is not None else None
+        new = change(current)
+        if new is None:
+            return current
+        write = kv.set(key).json(new)
+        write = write.expect_version(entry.version) if entry is not None else write.expect_absent()
+        try:
+            await write.commit()
+            return new
+        except ls.KvError as error:
+            if not getattr(error, "version_conflict", False):
+                raise
+
+
+def auto_decision(text: str) -> str:
+    """Stands in for a person on an approval: approve up to the desk's limit, decline over it."""
+    amount = re.search(r"\$(\d+(?:\.\d{1,2})?)", text)
+    value = int(round(float(amount.group(1)) * 100)) if amount else 0
+    return "approved" if value <= C.APPROVAL_LIMIT_CENTS else "declined"
+
+
 def is_addressed(message, agent: str):
     """All three agents read the one log; each acts only on what is routed to it."""
     if message.provenance.target_agent_id != agent:
@@ -143,10 +171,9 @@ class Desk:
         # memory reads back on Laser SDK 0.4.0 (see memory_probe.py).
         self.kb_mem = self.sessions.create(C.KB_SCOPE).memory()
         self._kb_index = None
-        # Customer history, embedded once per note per process (see history_recall).
-        self._history_index = None
-        self._history_seen: set[str] = set()
-        self._history_epoch = None
+        # Customer history, embedded once per note per process (see history_recall),
+        # one index per customer: (index, notes seen, epoch).
+        self._history: dict[str, tuple] = {}
 
     # ---- the log
     async def event(self, t: str, step: str, agent: str | None = None, **extra) -> None:
@@ -162,6 +189,13 @@ class Desk:
         raw = await self.state.get(t)
         return bytes(raw).decode() if raw is not None else None
 
+    async def set_customer(self, t: str, customer: str) -> None:
+        await self.state.set(f"{t}:customer").payload(customer).send()
+
+    async def get_customer(self, t: str) -> str:
+        raw = await self.state.get(f"{t}:customer")
+        return bytes(raw).decode() if raw is not None else C.CUSTOMER
+
     async def handoff(self, t: str, target: str, body: dict, key: str | None = None) -> None:
         body = {**body, "trace": telemetry.carrier() or body.get("trace", {})}
         prov = ls.Provenance(conversation_id=t, agent=self.agent, target_agent_id=target,
@@ -174,18 +208,50 @@ class Desk:
             return None
         raw = await self.orders.get(str(order))
         if raw is not None:
-            return json.loads(bytes(raw).decode())
+            record = json.loads(bytes(raw).decode())
+            record.pop("refund_keys", None)  # bookkeeping, not part of the order
+            return record
         seed = C.ORDERS.get(str(order))
         if seed is not None:
             await self.orders.set(str(order)).payload(json.dumps(seed)).send()
         return json.loads(json.dumps(seed)) if seed is not None else None
 
-    async def record_refund(self, order, amount: int) -> None:
-        record = await self.get_order(order)
-        if record is None:
-            return
-        record.setdefault("refunds", []).append(amount)
-        await self.orders.set(str(order)).payload(json.dumps(record)).send()
+    async def record_refund(self, order, amount: int, key: str) -> None:
+        """Add the refund to the order, once per key: a redelivered refund that
+        already got this far changes nothing."""
+        seed = C.ORDERS.get(str(order))
+
+        def change(record):
+            if record is None and seed is not None:
+                record = json.loads(json.dumps(seed))
+            if record is None or key in record.get("refund_keys", []):
+                return None
+            record.setdefault("refunds", []).append(amount)
+            record.setdefault("refund_keys", []).append(key)
+            return record
+        if order is not None:
+            await cas_update(self.orders, str(order), change)
+
+    # ---- the customer's account: total refunded, and which refunds are in it
+    @staticmethod
+    def _account(value) -> dict:
+        if isinstance(value, dict):
+            return value
+        return {"cents": int(value or 0), "keys": []}  # written by an older version
+
+    async def refunded(self, customer: str) -> int:
+        entry = await self.accounts.get_entry(customer)
+        return self._account(entry.json() if entry is not None else None)["cents"]
+
+    async def add_refund(self, customer: str, amount: int, key: str) -> int:
+        """Add to the customer's total, once per key. Compare-and-swap, so two
+        writers never overwrite each other's refunds."""
+        def change(value):
+            account = self._account(value)
+            if key in account["keys"]:
+                return None
+            return {"cents": account["cents"] + amount, "keys": account["keys"] + [key]}
+        return self._account(await cas_update(self.accounts, customer, change))["cents"]
 
     async def reset_orders(self, text: str | None = None) -> list[str]:
         """Put orders back to config.ORDERS: those named in `text`, or all of them."""
@@ -207,7 +273,8 @@ class Desk:
         # Session memory is laser.memory(<the sessions' namespace>) scoped to the
         # session's conversation: the default namespace is agent.session.
         store = self.laser.memory("agent.session")
-        targets = [self.sessions.create(self._history_name(await self.epoch())).conversation]
+        epoch = await self.epoch()
+        targets = [self.sessions.create(self._history_name(c, epoch)).conversation for c in C.CUSTOMERS]
         if kb:
             targets.append(self.sessions.create(C.KB_SCOPE).conversation)
         removed = 0
@@ -221,7 +288,7 @@ class Desk:
         if left:
             await self.meta.set("epoch").payload(str(await self.epoch() + 1)).send()
         self._kb_index = None
-        self._history_index = None
+        self._history = {}
         return {"forgotten": removed, "still_recalled": left, "new_epoch": bool(left)}
 
     # ---- memory
@@ -230,21 +297,25 @@ class Desk:
         return int(bytes(raw).decode()) if raw is not None else 0
 
     @staticmethod
-    def _history_name(epoch: int) -> str:
-        return C.HISTORY_SCOPE if epoch == 0 else f"{C.HISTORY_SCOPE}-e{epoch}"
+    def _history_name(customer: str, epoch: int) -> str:
+        scope = C.history_scope(customer)
+        return scope if epoch == 0 else f"{scope}-e{epoch}"
 
-    async def history_mem(self):
-        return self.sessions.create(self._history_name(await self.epoch())).memory()
+    async def history_mem(self, customer: str):
+        return self.sessions.create(self._history_name(customer, await self.epoch())).memory()
 
     async def seed_memory(self) -> tuple[int, int]:
+        """Knowledge base notes, and customer history notes across all customers."""
         counts = []
-        for mem, seed in ((self.kb_mem, C.KB_NOTES), (await self.history_mem(), C.HISTORY_NOTES)):
+        stores = [(self.kb_mem, C.KB_NOTES)] + [
+            (await self.history_mem(c), C.HISTORY_NOTES[c]) for c in C.CUSTOMERS]
+        for mem, seed in stores:
             have = {item.text for item in await mem.recall(limit=500)}
             missing = [note for note in seed if note not in have]
             for note in missing:
                 await mem.remember(note)
             counts.append(len(have) + len(missing))
-        return counts[0], counts[1]
+        return counts[0], sum(counts[1:])
 
     async def kb_recall(self, query: str, limit: int = 3) -> list[str]:
         if self._kb_index is None:
@@ -254,28 +325,28 @@ class Desk:
                 await self._kb_index.remember(note)
         return [m.text for m in await self._kb_index.recall(semantic=query, limit=limit)]
 
-    async def history_recall(self, query: str, limit: int = 3) -> list[str]:
+    async def history_recall(self, customer: str, query: str, limit: int = 3) -> list[str]:
         # Another process may have written notes since the last call, so read the
         # durable memory each time, but only embed the notes this index has not
         # seen. A cleared memory (or a new epoch) rebuilds it.
         epoch = await self.epoch()
-        notes = [item.text for item in await (await self.history_mem()).recall(limit=500)]
-        if (self._history_index is None or self._history_epoch != epoch
-                or not self._history_seen <= set(notes)):
-            self._history_index = self.laser.vector_memory(embed)
-            self._history_seen, self._history_epoch = set(), epoch
+        notes = [item.text for item in await (await self.history_mem(customer)).recall(limit=500)]
+        index, seen, built = self._history.get(customer, (None, set(), None))
+        if index is None or built != epoch or not seen <= set(notes):
+            index, seen = self.laser.vector_memory(embed), set()
+            self._history[customer] = (index, seen, epoch)
         for note in notes:
-            if note not in self._history_seen:
-                self._history_seen.add(note)
-                await self._history_index.remember(note)
-        return [m.text for m in await self._history_index.recall(semantic=query, limit=limit)]
+            if note not in seen:
+                seen.add(note)
+                await index.remember(note)
+        return [m.text for m in await index.recall(semantic=query, limit=limit)]
 
-    async def history_recent(self, n: int = 3) -> list[str]:
-        items = [item.text for item in await (await self.history_mem()).recall(limit=500)]
+    async def history_recent(self, customer: str, n: int = 3) -> list[str]:
+        items = [item.text for item in await (await self.history_mem(customer)).recall(limit=500)]
         return items[-n:]  # recall returns oldest first
 
-    async def learn(self, note: str) -> None:
-        await (await self.history_mem()).remember(note)
+    async def learn(self, customer: str, note: str) -> None:
+        await (await self.history_mem(customer)).remember(note)
 
     # ---- the LLM
     async def think(self, t: str, prompt: str) -> str:

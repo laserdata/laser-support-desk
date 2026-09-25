@@ -21,7 +21,7 @@ import laser_sdk as ls
 
 from . import config as C
 from . import telemetry
-from .core import Desk, connect, embed, embedder_name, is_addressed, setup
+from .core import Desk, auto_decision, connect, embed, embedder_name, is_addressed, setup
 from .llm import choose_llm
 
 
@@ -37,45 +37,71 @@ def triage(desk: Desk):
         if body is None:
             return
         t, text = body["ticket"], body["text"]
+        customer = body.get("customer") or C.CUSTOMER
         with telemetry.span("triage", parent=body.get("trace"), ticket=t):
+            if await desk.get_status(t) in C.TERMINAL:
+                await desk.event(t, "skip", text="ticket already closed")
+                return
             session = desk.sessions.open(t)
-            await desk.event(t, "msg", text=text)
-            history = await desk.history_recall(f"{C.CUSTOMER} {text}", 3)
-            kb = await desk.kb_recall(text, 2)
-            await desk.event(t, "kb", text=f"{len(kb)} notes, {len(history)} from customer history")
-            order = re.search(r"\b(\d{3,})\b", text)
-            amount = re.search(r"\$\s?(\d+(?:\.\d{1,2})?)", text)
-            default = {
-                "intent": "refund" if re.search(r"refund|charged", text, re.I) else "question",
-                "order": order.group(1) if order else None,
-                "amount_cents": int(round(float(amount.group(1)) * 100)) if amount else None,
-                "summary": text,
-                "reply": "Thanks for getting in touch. We're looking into this now and will get back to you shortly.",
-            }
-            triaged = await desk.think_json(t, (
-                "You are the triage agent on a customer support desk.\n"
-                f"Customer {C.CUSTOMER} wrote: \"{text}\"\n"
-                f"Customer history: {history}\nKnowledge base: {kb}\n"
-                "Return JSON with keys: intent (refund, question or complaint), order (the order id "
-                "as a string, or null), amount_cents (integer, or null), summary (one sentence of "
-                "what the customer is asking, in their terms only, nothing from history), "
-                "reply (a short friendly reply saying we are looking into it; write as the support "
-                "team, never mention agents, triage, resolvers or other internal roles; do not promise "
-                "an outcome and do not say what has or has not happened before)."), default)
-            await desk.event(t, "intent", text=f"{triaged['intent']}, order {triaged['order']}, "
-                                              f"amount {triaged['amount_cents']}")
-            # The facts go in the ticket's session memory: any agent, or a
-            # restarted one, reads them from the session, not from a message.
-            await session.memory().remember(json.dumps(
-                {k: triaged[k] for k in ("intent", "order", "amount_cents", "summary")}))
-            await session.append("response", triaged["reply"])
-            await desk.event(t, "reply", text=triaged["reply"])
-            await session.checkpoint()
-            await desk.event(t, "ckpt")
+            # A triage killed mid-ticket left its progress in KV: pick up from
+            # there, so the customer is not triaged, or answered, twice.
+            key = f"{t}:triage"
+            raw = await desk.ckpts.get(key)
+            progress = json.loads(bytes(raw).decode()) if raw is not None else None
+            if progress:
+                triaged = progress["triaged"]
+                await desk.event(t, "replay", text="from checkpoint: " + (
+                    "reply already sent, handing off" if progress["replied"] else "facts already extracted"))
+            else:
+                triaged = await extract(desk, t, customer, text)
+                progress = {"triaged": triaged, "replied": False}
+                await desk.ckpts.set(key).payload(json.dumps(progress)).send()
+                await desk.event(t, "ckpt", text="triage result saved to KV")
+            if not progress["replied"]:
+                # The facts go in the ticket's session memory: any agent, or a
+                # restarted one, reads them from the session, not from a message.
+                await session.memory().remember(json.dumps(
+                    {k: triaged[k] for k in ("intent", "order", "amount_cents", "summary")}))
+                await session.append("response", triaged["reply"])
+                await desk.event(t, "reply", text=triaged["reply"])
+                progress["replied"] = True
+                await desk.ckpts.set(key).payload(json.dumps(progress)).send()
+                await session.checkpoint()
+                await desk.event(t, "ckpt", text="reply sent, saved to KV")
             await desk.status(t, "triaged")
-            await desk.handoff(t, "resolver", {**body, **triaged})
+            await desk.handoff(t, "resolver", {**body, **triaged, "customer": customer}, key=f"triage-{t}")
             await desk.event(t, "route", text="handoff to resolver")
     return handler
+
+
+async def extract(desk: Desk, t: str, customer: str, text: str) -> dict:
+    """Intent, order, amount and a first reply, from the LLM (or the regex fallback)."""
+    await desk.event(t, "msg", text=text, customer=customer)
+    history = await desk.history_recall(customer, f"{customer} {text}", 3)
+    kb = await desk.kb_recall(text, 2)
+    await desk.event(t, "kb", text=f"{len(kb)} notes, {len(history)} from customer history")
+    order = re.search(r"\b(\d{3,})\b", text)
+    amount = re.search(r"\$\s?(\d+(?:\.\d{1,2})?)", text)
+    default = {
+        "intent": "refund" if re.search(r"refund|charged", text, re.I) else "question",
+        "order": order.group(1) if order else None,
+        "amount_cents": int(round(float(amount.group(1)) * 100)) if amount else None,
+        "summary": text,
+        "reply": "Thanks for getting in touch. We're looking into this now and will get back to you shortly.",
+    }
+    triaged = await desk.think_json(t, (
+        "You are the triage agent on a customer support desk.\n"
+        f"Customer {customer} wrote: \"{text}\"\n"
+        f"Customer history: {history}\nKnowledge base: {kb}\n"
+        "Return JSON with keys: intent (refund, question or complaint), order (the order id "
+        "as a string, or null), amount_cents (integer, or null), summary (one sentence of "
+        "what the customer is asking, in their terms only, nothing from history), "
+        "reply (a short friendly reply saying we are looking into it; write as the support "
+        "team, never mention agents, triage, resolvers or other internal roles; do not promise "
+        "an outcome and do not say what has or has not happened before)."), default)
+    await desk.event(t, "intent", text=f"{triaged['intent']}, order {triaged['order']}, "
+                                      f"amount {triaged['amount_cents']}")
+    return triaged
 
 
 # ---------------------------------------------------------------- resolver
@@ -144,19 +170,20 @@ async def finish(desk: Desk, t: str, body: dict) -> None:
             await desk.event(t, "memory", text=f"session facts: order {facts.get('order')}, "
                                               f"amount {facts.get('amount_cents')}")
             break
+    customer = body.get("customer") or C.CUSTOMER
     record = await desk.get_order(body.get("order"))
     if body.get("intent") != "refund":
-        await answer(desk, t, body, record)
+        await answer(desk, t, customer, body, record)
         return
     policy = await desk.kb_recall("refund policy duplicate charge manager", 3)
     await desk.event(t, "kb", text="; ".join(policy))
     turns = await session.context()
-    default = refund_rule(record)
+    default = refund_rule(record, customer)
     # One LLM call decides and writes every reply the outcome might need, so the
     # human's answer later needs no second call.
     decision = await desk.think_json(t, (
         "You are the resolver agent on a customer support desk.\n"
-        f"Customer on this ticket: {C.CUSTOMER}\n"
+        f"Customer on this ticket: {customer}\n"
         "Conversation so far:\n" + "\n".join(turn.text() for turn in turns) + "\n"
         f"The customer wrote: {body['text']}\n"
         f"Order record (charges and refunds in cents): {record}\nPolicy: {policy}\n"
@@ -177,7 +204,7 @@ async def finish(desk: Desk, t: str, body: dict) -> None:
     reason = decision.get("reason") or default["reason"]
     amount = int(decision.get("amount_cents") or 0)
     replies = {
-        "no_refund": no_refund_reply(body.get("order"), record, reason),
+        "no_refund": no_refund_reply(body.get("order"), record, reason, customer),
         "approved": f"Good news: your {cents(amount)} refund has been approved and will be issued shortly.",
         "declined": f"Your {cents(amount)} refund needs sign-off from a manager, who will be in touch.",
     }
@@ -191,18 +218,18 @@ async def finish(desk: Desk, t: str, body: dict) -> None:
         await session.append("response", reply)
         await desk.event(t, "reply", text=reply)
         await desk.status(t, "closed")
-        await desk.learn(f"{C.CUSTOMER}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
-                         f"{body.get('order')}, no refund: {decision['reason']}")
+        await desk.learn(customer, f"{customer}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
+                                   f"{body.get('order')}, no refund: {decision['reason']}")
         return
     # Never wait for a human inside the handler: that would block the agent
     # for every other ticket. Save the pending decision, ask on the log, and
     # return. The answer comes back as a message and decided() carries on.
     pending = {"amount": amount, "reason": decision["reason"], "order": body.get("order"),
-               "text": body["text"], "replies": replies}
+               "text": body["text"], "replies": replies, "customer": customer}
     await desk.ckpts.set(f"{t}:pending").payload(json.dumps(pending)).send()
     await desk.status(t, "awaiting approval")
     await desk.laser.send_agent(ls.Topics.HUMAN_INPUT, json.dumps({
-        "ticket": t, "text": f"approve a {cents(amount)} refund to {C.CUSTOMER} for order "
+        "ticket": t, "text": f"approve a {cents(amount)} refund to {customer} for order "
                             f"{body.get('order')}? {decision['reason']}"}).encode(),
         ls.Provenance(conversation_id=t, agent="resolver", target_agent_id="human"))
     await desk.event(t, "approve", text=f"asked a human: {cents(amount)}, {decision['reason']}")
@@ -217,8 +244,8 @@ async def decided(desk: Desk, body: dict) -> None:
     if not pending:
         await desk.event(t, "skip", text="no approval pending (already decided)")
         return
-    await desk.ckpts.set(f"{t}:pending").payload("null").send()
     amount, reason = pending["amount"], pending["reason"]
+    customer = pending.get("customer") or C.CUSTOMER
     body = {**body, "order": pending["order"], "text": pending["text"]}
     approved = body["decision"] == "approved"
     decision = {"reason": reason}
@@ -232,30 +259,34 @@ async def decided(desk: Desk, body: dict) -> None:
     await desk.event(t, "reply", text=reply)
     if approved:
         await desk.handoff(t, "billing", {"ticket": t, "amount": amount, "order": body.get("order"),
-                                          "reason": decision["reason"]}, key=f"refund-{t}")
+                                          "customer": customer, "reason": decision["reason"]},
+                           key=f"refund-{t}")
         await desk.event(t, "route", text="handoff to billing")
     else:
         await desk.status(t, "declined")
-        await desk.learn(f"{C.CUSTOMER}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
-                         f"{body.get('order')}, {cents(amount)} refund declined at the desk, "
-                         "escalated to a manager")
+        await desk.learn(customer, f"{customer}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
+                                   f"{body.get('order')}, {cents(amount)} refund declined at the desk, "
+                                   "escalated to a manager")
+    # Only now is the decision spent. Killed before this line, the redelivered
+    # answer finds it still pending and carries on; billing dedups the handoff.
+    await desk.ckpts.set(f"{t}:pending").payload("null").send()
 
 
-def no_refund_reply(order, record, reason: str) -> str:
+def no_refund_reply(order, record, reason: str, customer: str) -> str:
     """What the customer is told when there is no refund. The reason on the log can
     name another customer; the reply never does."""
     if not order or order == "None":
         return "Could you send us the order number? Then we can check the charges on it."
-    if not record or record["customer"] != C.CUSTOMER:
+    if not record or record["customer"] != customer:
         return f"We couldn't find order {order} on your account. Could you check the order number?"
     return f"We've checked order {order}: {reason}."
 
 
-def refund_rule(record) -> dict:
+def refund_rule(record, customer: str) -> dict:
     """The rule-based answer the LLM is checked against (and the fallback with the mock)."""
     if not record:
         return {"refund": False, "amount_cents": 0, "reason": "the order is not in the system"}
-    if record["customer"] != C.CUSTOMER:
+    if record["customer"] != customer:
         return {"refund": False, "amount_cents": 0,
                 "reason": f"the order belongs to a different customer ({record['customer']})"}
     charges = record["charges"]
@@ -271,71 +302,78 @@ def refund_rule(record) -> dict:
                       f"{cents(due)} beyond the first"}
 
 
-async def answer(desk: Desk, t: str, body: dict, record) -> None:
-    """Not a refund: answer from the knowledge base and the order record."""
+async def answer(desk: Desk, t: str, customer: str, body: dict, record) -> None:
+    """Not a refund: answer from the knowledge base, the order record and this
+    customer's own history (never another customer's)."""
     session = desk.sessions.open(t)
     notes = await desk.kb_recall(body["text"], 3)
-    await desk.event(t, "kb", text="; ".join(notes))
+    history = await desk.history_recall(customer, body["text"], 3)
+    await desk.event(t, "kb", text="; ".join(notes + history))
+    if record and record.get("customer") != customer:
+        record = "not on this customer's account"
     reply = await desk.write(t, (
-        f"You are a support agent. Customer {C.CUSTOMER} asked: {body['text']}\n"
-        f"Order record: {record}\nKnowledge base: {notes}\n"
-        "Answer them in two or three sentences, using only what the record and the knowledge base say."),
+        f"You are a support agent. Customer {customer} asked: {body['text']}\n"
+        f"Order record: {record}\nKnowledge base: {notes}\nThis customer's history: {history}\n"
+        "Answer them in two or three sentences, using only what the record, the knowledge base "
+        "and their history say."),
         "Thanks for asking. " + (notes[0] if notes else "We'll follow up by email."))
     await session.append("response", reply)
     await desk.event(t, "reply", text=reply)
     await desk.status(t, "answered")
-    await desk.learn(f"{C.CUSTOMER}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, asked: {body['text']}")
+    await desk.learn(customer, f"{customer}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, asked: {body['text']}")
 
 
 # ---------------------------------------------------------------- billing
 
-def billing_dedup(desk: Desk):
-    """Durable fires-once: the key lives in KV, so it survives a billing restart."""
-    store = desk.laser.kv(C.NS_DEDUP)
-
-    async def observe(key: str) -> bool:
-        if await store.get(key) is not None:
-            ticket = key.split("refund-")[-1]
-            await desk.event(ticket, "dedup", text=f"duplicate {key} skipped")
-            return False
-        await store.set(key).payload(b"1").ttl(86400.0).send()
-        return True
-    return observe
-
-
 def billing(desk: Desk):
+    """Issues each refund once. The ledger entry, keyed by the handoff's
+    idempotency key, is the progress marker: a billing killed part way through
+    finds its entry on redelivery and finishes the refund; one that finished
+    finds it marked done and skips. The account and order updates are keyed too,
+    so repeating them changes nothing."""
     async def handler(ctx, message):
         body = is_addressed(message, "billing")
         if body is None:
             return
-        t = body["ticket"]
+        t, amount = body["ticket"], body["amount"]
+        customer = body.get("customer") or C.CUSTOMER
+        key = message.idempotency_key or f"refund-{t}"
         with telemetry.span("billing", parent=body.get("trace"), ticket=t):
+            entry = await desk.accounts.get_entry(f"ledger:{key}")
+            ledger = entry.json() if entry is not None else None
+            if ledger and ledger.get("done"):
+                await desk.event(t, "dedup", text=f"duplicate {key} skipped: refund already issued")
+                return
             session = desk.sessions.open(t)
-            await desk.event(t, "recv", text=cents(body["amount"]))
-            turns = await session.context()
-            await desk.event(t, "ctx", text=f"{len(turns)} turns")
-            raw = await desk.accounts.get(C.CUSTOMER)
-            refunded = int(bytes(raw).decode()) if raw is not None else 0
-            await desk.event(t, "acct", text=f"{C.CUSTOMER} refunded so far: {cents(refunded)}")
-            memo = await desk.write(t, (
-                f"Write a one-line ledger memo for a {cents(body['amount'])} refund to {C.CUSTOMER}, "
-                f"ticket {t[:12]}. Reason: {body.get('reason', '')}."),
-                f"refund {cents(body['amount'])}: {body.get('reason', '')}")
-            await session.checkpoint()
-            await desk.event(t, "ckpt")
-            await desk.accounts.set(f"ledger:{message.idempotency_key}").payload(
-                json.dumps({"ticket": t, "cents": body["amount"], "memo": memo})).send()
-            await desk.event(t, "ledger", text=memo)
-            await desk.accounts.set(C.CUSTOMER).payload(str(refunded + body["amount"])).send()
-            await desk.record_refund(body.get("order"), body["amount"])
-            await desk.event(t, "refund", text=f"{cents(body['amount'])} to {C.CUSTOMER} (fires once)",
-                             cents=body["amount"])
+            await desk.event(t, "recv", text=cents(amount))
+            if ledger:
+                await desk.event(t, "replay", text=f"ledger entry {key} found: finishing the refund it started")
+            else:
+                turns = await session.context()
+                await desk.event(t, "ctx", text=f"{len(turns)} turns")
+                await desk.event(t, "acct", text=f"{customer} refunded so far: "
+                                                 f"{cents(await desk.refunded(customer))}")
+                memo = await desk.write(t, (
+                    f"Write a one-line ledger memo for a {cents(amount)} refund to {customer}, "
+                    f"ticket {t[:12]}. Reason: {body.get('reason', '')}."),
+                    f"refund {cents(amount)}: {body.get('reason', '')}")
+                ledger = {"ticket": t, "customer": customer, "order": body.get("order"),
+                          "cents": amount, "memo": memo, "done": False}
+                await desk.accounts.set(f"ledger:{key}").json(ledger).send()
+                await session.checkpoint()
+                await desk.event(t, "ckpt", text="ledger entry saved to KV")
+                await desk.event(t, "ledger", text=memo)
+            total = await desk.add_refund(customer, amount, key)
+            await desk.record_refund(ledger.get("order"), amount, key)
+            await desk.event(t, "refund", text=f"{cents(amount)} to {customer} (fires once), "
+                                               f"{cents(total)} refunded in total", cents=amount, key=key)
             await desk.status(t, "refunded")
-            await desk.learn(f"{C.CUSTOMER}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
-                             f"{body.get('order')}, refunded {cents(body['amount'])}: {body.get('reason', '')}")
-            reply = f"Your refund of {cents(body['amount'])} has been issued."
+            await desk.learn(customer, f"{customer}: {time.strftime('%Y-%m-%d')} ticket {t[:12]}, order "
+                                       f"{ledger.get('order')}, refunded {cents(amount)}: {body.get('reason', '')}")
+            reply = f"Your refund of {cents(amount)} has been issued."
             await session.append("response", reply)
             await desk.event(t, "ok", text=reply)
+            await desk.accounts.set(f"ledger:{key}").json({**ledger, "done": True}).send()
     return handler
 
 
@@ -349,9 +387,7 @@ def approver(desk: Desk):
             asked = json.loads(bytes(message.payload).decode("utf-8", "replace"))
         except ValueError:
             return
-        amount = re.search(r"\$(\d+(?:\.\d{1,2})?)", asked.get("text", ""))
-        value = int(round(float(amount.group(1)) * 100)) if amount else 0
-        decision = "approved" if value <= C.APPROVAL_LIMIT_CENTS else "declined"
+        decision = auto_decision(asked.get("text", ""))
         await desk.handoff(asked["ticket"], "resolver", {"ticket": asked["ticket"], "decision": decision})
     return handler
 
@@ -384,9 +420,8 @@ async def main(name: str) -> None:
                                    poll_interval_ms=20)
     else:
         make = {"triage": triage, "resolver": resolver, "billing": billing}[name]
-        extra = {"dedup": billing_dedup(desk)} if name == "billing" else {}
         handle = laser.spawn_agent(name, C.DESK_TOPIC, guarded(desk, name, make(desk)),
-                                   poll_interval_ms=20, **extra)
+                                   poll_interval_ms=20)
     await handle.ready()
     await desk.event("-", "ready", text=llm.name if llm else "auto-approve")
 

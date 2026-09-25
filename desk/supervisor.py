@@ -59,18 +59,28 @@ class Supervisor:
         return proc.pid if proc and proc.returncode is None else None
 
     async def kill(self, name: str) -> int | None:
-        """SIGKILL: no cleanup, no goodbye. The supervisor brings it back."""
-        pid = self.pid(name)
-        if pid:
-            await self._notify(name, "killed", pid)
-            os.kill(pid, signal.SIGKILL)
-        return pid
+        """SIGKILL: no cleanup, no goodbye. The supervisor brings it back.
+        Only ever a process this supervisor started and still holds: the signal
+        goes through its handle, never a bare pid that could since belong to
+        something else."""
+        proc = self.procs.get(name)
+        if proc is None or proc.returncode is not None:
+            return None
+        await self._notify(name, "killed", proc.pid)
+        try:
+            proc.send_signal(signal.SIGKILL)
+        except ProcessLookupError:
+            return None
+        return proc.pid
 
     async def restart(self, name: str) -> None:
         """A graceful restart (SIGTERM)."""
-        pid = self.pid(name)
-        if pid:
-            os.kill(pid, signal.SIGTERM)
+        proc = self.procs.get(name)
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.send_signal(signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
     async def stop(self) -> None:
         self.stopping = True

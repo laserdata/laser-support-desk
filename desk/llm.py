@@ -18,6 +18,8 @@ class MockLlm:
     last = ""
 
     async def complete(self, prompt: str) -> str:
+        # DESK_MOCK_DELAY slows it to the pace of a real call (the demo loop sets it).
+        await asyncio.sleep(float(os.environ.get("DESK_MOCK_DELAY", "0") or 0))
         self.last = f"[mock-llm] {prompt.strip().splitlines()[0][:90]}"
         return self.last
 

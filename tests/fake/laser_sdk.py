@@ -3,6 +3,8 @@ import asyncio, json, itertools
 
 class LaserError(Exception): pass
 class CodecError(LaserError): pass
+class KvError(LaserError):
+    def __init__(self, msg, version_conflict=False): super().__init__(msg); self.version_conflict=version_conflict
 class UnsupportedError(LaserError): pass
 
 class Topics:
@@ -62,14 +64,29 @@ class Sessions:
     def open(self, c): return Session(self.laser, c)
     def create(self, name): return Session(self.laser, "named-"+name)
 
+class KvEntry:
+    def __init__(self, value, version): self.value=list(value); self.version=version
+    def json(self): return json.loads(bytes(self.value))
+
 class KvSet:
-    def __init__(self, kv, key): self.kv=kv; self.key=key; self.val=None
+    def __init__(self, kv, key): self.kv=kv; self.key=key; self.val=None; self.expect=None
     def payload(self, v): self.val = v.encode() if isinstance(v,str) else bytes(v); return self
+    def json(self, v): self.val = json.dumps(v).encode(); return self
     def ttl(self, t): return self
-    async def send(self): self.kv[self.key]=self.val
+    def expect_version(self, v): self.expect=v; return self
+    def expect_absent(self): self.expect=0; return self
+    async def send(self):
+        self.kv[self.key]=self.val; self.kv.versions[self.key]=self.kv.versions.get(self.key, 0)+1
+    async def commit(self):
+        if self.kv.versions.get(self.key, 0) != self.expect: raise KvError("version conflict", True)
+        await self.send(); return self.kv.versions[self.key]
 
 class Kv(dict):
+    def __init__(self): super().__init__(); self.versions={}
     async def get(self, key): return dict.get(self, key)
+    async def get_entry(self, key):
+        v = dict.get(self, key)
+        return None if v is None else KvEntry(v, self.versions.get(key, 0))
     def set(self, key): return KvSet(self, key)
 
 KVS = {}

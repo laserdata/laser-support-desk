@@ -111,6 +111,7 @@
   .composer { margin-top: .4rem; flex: none; }
   .composer .row { display: flex; gap: .6rem; margin-top: .5rem; align-items: center; }
   .composer .row .muted { flex: 1; font-size: .85rem; }
+  .composer select { font: inherit; font-size: .88rem; padding: .25rem .4rem; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); }
 
   /* stepper */
   #stepper { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; flex: none; margin-bottom: .6rem; min-height: 1.9rem; }
@@ -225,6 +226,7 @@
   <h1>Agents fail. <b>Their sessions shouldn't.</b></h1>
   <span class="meta" id="meta">connecting…</span>
   <div class="tools">
+    <button class="small ghost" id="demo" aria-pressed="false" title="Run every scenario in turn, forever, deciding approvals by the desk's limit">Demo loop</button>
     <button class="small ghost" id="present" title="Larger type, demo data controls hidden">Presenter mode</button>
     <button class="small ghost" id="theme" title="Light theme for slides and screenshots">Light theme</button>
     <button class="small ghost" id="more" aria-haspopup="true" aria-expanded="false">Demo data ▾</button>
@@ -244,7 +246,7 @@
     <div id="typing"></div>
     <div class="composer">
       <textarea id="text" placeholder="Or type your own customer message"></textarea>
-      <div class="row"><span class="muted">Enter sends, Shift+Enter for a new line</span><button class="primary" id="send">Send</button></div>
+      <div class="row"><label class="muted">From <select id="customer" aria-label="Customer"></select> · Enter sends, Shift+Enter for a new line</label><button class="primary" id="send">Send</button></div>
     </div>
   </section>
 
@@ -340,9 +342,10 @@ function adopt(ticket) {
 
 async function send(scenario, text) {
   if (sending || (!text && !scenario)) return;
+  if (demoOn) setDemo(false);  // a person has taken over
   sending = true; setComposerBusy(true);
   let r;
-  try { r = await post("/api/ticket", {scenario, text}); }
+  try { r = await post("/api/ticket", {scenario, text, customer: $("customer").value}); }
   catch (err) { r = {error: String(err)}; }
   sending = false; setComposerBusy(false);
   if (r.error) { $("about").innerHTML = `<span class="fail">${esc(r.error)}</span>`; return; }
@@ -352,7 +355,7 @@ async function send(scenario, text) {
   document.querySelectorAll("#scenarios button").forEach(b => b.classList.toggle("sel", b.dataset.s === scenario));
   const about = scenario && config.scenarios[scenario];
   $("about").innerHTML = about ? `<b>${esc(scenario)}</b>: ${esc(about.about)}` : "Your own message.";
-  say("customer", r.text, "customer");
+  say(r.customer || "customer", r.text, "customer");
   onStatus("open");
   $("text").value = "";
   // Anything the agents logged before the response came back.
@@ -389,7 +392,14 @@ function setHolder(h) {
 }
 
 function onApproval(m) {
-  if (m.ticket !== current) return;
+  if (m.ticket !== current) {
+    // Nothing else in progress (a reloaded page, or a restarted server): pick it up.
+    if (current && !TERMINAL.includes(currentStatus())) return;
+    resetTicket(m.ticket, "waiting for approval");
+    $("about").innerHTML = "Picked up a ticket that is waiting for your approval.";
+    document.querySelectorAll("#scenarios button").forEach(b => b.classList.remove("sel"));
+    onStatus("awaiting approval");
+  }
   approvalOpen = true;
   $("approval").innerHTML = `<div class="approval" id="ap-${esc(m.id)}">
     <span class="who">The resolver asks a human</span>${esc(m.text)}
@@ -406,12 +416,12 @@ async function decide(id, decision) {
   closeApproval(id, decision);
 }
 
-function closeApproval(id, decision) {
+function closeApproval(id, decision, auto) {
   if ($("approval").dataset.id !== id) return;
   const amount = ($("approval").dataset.text || "").match(/\$[\d,.]+\d/);
   $("approval").innerHTML = ""; delete $("approval").dataset.id;
   approvalOpen = false;
-  say("", `You ${decision} the ${amount ? amount[0] + " " : ""}refund`, "system " + decision);
+  say("", `${auto ? "The demo loop" : "You"} ${decision} the ${amount ? amount[0] + " " : ""}refund`, "system " + decision);
   setHolder("resolver");
 }
 
@@ -420,7 +430,7 @@ function closeApproval(id, decision) {
 function onEvent(e) {
   if (e.agent === "desk" && e.step === "status" && e.status === "open" && e.ticket !== current && !sending) adopt(e.ticket);
   if (e.ticket !== current) return;
-  if (e.agent === "triage" && e.step === "msg" && !sawCustomer) { sawCustomer = true; say("customer", e.text, "customer"); }
+  if (e.agent === "triage" && e.step === "msg" && !sawCustomer) { sawCustomer = true; say(e.customer || "customer", e.text, "customer"); }
   if (e.agent === "evals" && e.step === "eval" && !evalResult) {
     // CLI tickets: the server does not evaluate them, but the judge is on the log.
     evalResult = {checks: {}, judge: {score: e.score, reason: e.text}};
@@ -644,6 +654,50 @@ function renderLegend() {
     <dt><span class="line resume"></span></dt><dd>resumed: the new process picks up from the checkpoint, not from the top</dd></dl>`;
 }
 
+// ---------------------------------------------------------------- demo loop
+
+let demoOn = false, demoTimer = null;
+
+function showDemo(on) {
+  demoOn = on;
+  $("demo").classList.toggle("on", on);
+  $("demo").setAttribute("aria-pressed", String(on));
+  $("demo").textContent = on ? "Demo loop: on" : "Demo loop";
+  if (!on) clearInterval(demoTimer);
+}
+
+async function setDemo(on) {
+  const r = await post("/api/demo", {on});
+  showDemo(!!r.demo);
+}
+
+function onDemoTicket(m) {
+  // The demo loop opened it: follow it from its first step.
+  resetTicket(m.ticket, m.scenario);
+  currentTrace = m.trace; sawCustomer = true;
+  document.querySelectorAll("#scenarios button").forEach(b => b.classList.toggle("sel", b.dataset.s === m.scenario));
+  const about = config.scenarios[m.scenario];
+  $("about").innerHTML = `<b>Demo loop · ${esc(m.scenario)}</b>` + (about ? `: ${esc(about.about)}` : "");
+  $("customer").value = m.customer;
+  say(m.customer, m.text, "customer");
+  onStatus("open");
+  setTimeout(refreshReaders, 300);
+}
+
+function onDemo(m) {
+  showDemo(m.state !== "off");
+  clearInterval(demoTimer);
+  if (m.state !== "waiting") return;
+  let left = Math.round(m.seconds);
+  const tick = () => {
+    const note = $("demo-next") || $("about").appendChild(Object.assign(document.createElement("div"), {id: "demo-next", className: "muted"}));
+    note.innerHTML = `Next: <b>${esc(m.next)}</b> in ${left}s${m.reset ? ", after a reset of the demo data" : ""}`;
+    if (left-- <= 0) clearInterval(demoTimer);
+  };
+  tick();
+  demoTimer = setInterval(tick, 1000);
+}
+
 // ---------------------------------------------------------------- readers
 
 function onEval(m) {
@@ -719,7 +773,7 @@ async function refreshReaders() {
   $("readers").innerHTML = [
     card({id: "state", title: "State", tag: "primitive", value: esc(r.state || "–"), sub: "ticket status, read from KV"}),
     card({id: "memory", title: "Memory", tag: "primitive", value: esc(sessionFacts(r.session_memory)),
-          sub: "session memory for this ticket; below, customer history, durable, written back after each ticket",
+          sub: `session memory for this ticket; below, ${esc(r.customer || "customer")}'s history, durable, written back after each ticket`,
           noun: "recent history notes",
           items: memory.map(n => {
             const mine = n.includes(t.slice(0, 12));
@@ -812,11 +866,18 @@ async function init() {
   $("meta").textContent = `LLM: ${config.llm} · memory: ${config.memory.kb} KB notes, ${config.memory.history} customer history`;
   $("scenarios").innerHTML = Object.entries(config.scenarios).map(([k, v]) =>
     `<button data-s="${esc(k)}" title="${esc(v.about)}">${esc(k)}</button>`).join("");
+  $("customer").innerHTML = (config.customers || []).map(c =>
+    `<option value="${esc(c)}"${c === config.customer ? " selected" : ""}>${esc(c)}</option>`).join("");
   $("scenarios").onclick = (ev) => {
     const b = ev.target.closest("[data-s]");
-    if (b) send(b.dataset.s, config.scenarios[b.dataset.s].message);
+    if (!b) return;
+    const scenario = config.scenarios[b.dataset.s];
+    $("customer").value = scenario.customer;  // a scenario is written as its customer
+    send(b.dataset.s, scenario.message);
   };
   $("send").onclick = () => send("", $("text").value.trim());
+  showDemo(!!config.demo);
+  $("demo").onclick = () => setDemo(!demoOn);
   $("text").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("send").click(); }
   });
@@ -844,9 +905,11 @@ async function init() {
     }
     else if (m.type === "agent") onAgent(m);
     else if (m.type === "approval") onApproval(m);
-    else if (m.type === "approval_done") closeApproval(m.id, m.decision);
+    else if (m.type === "approval_done") closeApproval(m.id, m.decision, m.auto);
+    else if (m.type === "ticket" && m.demo) onDemoTicket(m);
+    else if (m.type === "demo") onDemo(m);
     else if (m.type === "eval") onEval(m);
-    else if (m.type === "hello") { Object.assign(pids, m.pids); renderHeads(); }
+    else if (m.type === "hello") { Object.assign(pids, m.pids); renderHeads(); showDemo(!!m.demo); }
   };
   ws.onclose = () => { $("meta").innerHTML = '<span class="fail">Disconnected from the desk server: reload the page</span>'; };
 }

@@ -29,11 +29,10 @@ EVENTS_INDEX = os.environ.get("DESK_EVENTS_INDEX", "support_events")
 # KV namespaces
 NS_TICKETS = "desk-tickets"        # ticket status
 NS_ACCOUNTS = "desk-accounts"      # balances and ledger
-NS_CKPT = "desk-ckpt"              # resolver checkpoints
-NS_DEDUP = "desk-dedup"            # durable fires-once keys
+NS_CKPT = "desk-ckpt"              # triage and resolver checkpoints, pending approvals
 NS_CRASH = "desk-crash"            # which tickets the scripted crash already hit
 NS_ORDERS = "desk-orders"          # the order system: charges and refunds, updated by billing
-NS_META = "desk-meta"              # the memory epoch, bumped by a demo reset
+NS_META = "desk-meta"              # the memory epoch, and approvals waiting on a human
 
 TERMINAL = {"refunded", "closed", "answered", "declined"}
 
@@ -45,9 +44,13 @@ CRASH_ONCE = os.environ.get("DESK_CRASH_ONCE", "0") == "1"
 
 # ---------------------------------------------------------------- demo data
 
-CUSTOMER = "acme"
-HISTORY_SCOPE = f"customer-{CUSTOMER}"
+CUSTOMER = "acme"                  # who a ticket is from when nobody says
 KB_SCOPE = "desk-kb"
+
+
+def history_scope(customer: str) -> str:
+    """Each customer's history is its own named session: recall never crosses customers."""
+    return f"customer-{customer}"
 
 # Refunds above this are declined at the desk and escalated to a manager.
 APPROVAL_LIMIT_CENTS = 20000
@@ -62,10 +65,22 @@ KB_NOTES = [
     "checkout timeouts when adding seats: retry after clearing the cart; engineering is tracking a fix",
     "we only discuss or refund an order with the customer who placed it",
 ]
-HISTORY_NOTES = [
-    "acme: premium plan since 2024, two tickets last year, both resolved same day",
-    "acme: prefers email replies, contact is the finance team",
-]
+# Each customer's starting history.
+HISTORY_NOTES = {
+    "acme": [
+        "acme: premium plan since 2024, two tickets last year, both resolved same day",
+        "acme: prefers email replies, contact is the finance team",
+    ],
+    "globex": [
+        "globex: standard plan since 2025, pays by invoice, contact is the IT manager",
+        "globex: asked last quarter why their support add-on was billed twice; told to raise it if it recurs",
+    ],
+    "initech": [
+        "initech: enterprise plan, finance team is strict about reconciling every refund",
+        "initech: 2026-09-15 $120 duplicate on order 1050 refunded to the card; finance was told to allow five business days",
+    ],
+}
+CUSTOMERS = list(HISTORY_NOTES)
 # The order system (charges in cents).
 ORDERS = {
     "1042": {"customer": "acme", "item": "annual support add-on", "charges": [4900, 4900]},
@@ -76,9 +91,11 @@ ORDERS = {
     "1047": {"customer": "acme", "item": "usage top-up", "charges": [2500, 2500, 2500]},
     "1048": {"customer": "acme", "item": "priority support", "charges": [20000, 20000]},
     "1049": {"customer": "acme", "item": "extra storage", "charges": [4900, 1500]},
+    "1050": {"customer": "initech", "item": "analytics seats", "charges": [12000, 12000], "refunds": [12000]},
 }
 
-# name: (what it tests, customer message, expected final status, expected refund in cents)
+# name: (what it tests, customer message, expected final status, expected refund in cents).
+# Scenarios are from acme unless SCENARIO_CUSTOMERS says otherwise.
 SCENARIOS = {
     "duplicate": ("charged twice, the duplicate is refunded",
                   "Hi, I was charged twice for order 1042. Can you refund the duplicate $49?",
@@ -124,4 +141,41 @@ SCENARIOS = {
                           "Order 1049 shows two charges, $49 and $15. That looks like a double charge, "
                           "please refund one.",
                           "closed", 0),
+    "globex-duplicate": ("globex, the owner of order 1045, asks: its duplicate $80 is refunded",
+                         "Our support add-on on order 1045 was billed twice again, $80 each. "
+                         "Please refund the duplicate.",
+                         "refunded", 8000),
+    "initech-followup": ("initech asks after last week's refund: answered from its own history",
+                         "Our finance team still can't see the money back for order 1050. When should it show up?",
+                         "answered", 0),
 }
+SCENARIO_CUSTOMERS = {"globex-duplicate": "globex", "initech-followup": "initech"}
+
+
+def scenario_customer(name: str | None) -> str:
+    return SCENARIO_CUSTOMERS.get(name or "", CUSTOMER)
+
+# ---------------------------------------------------------------- chaos monkey
+
+# Off by default. When on, the chaos monkey SIGKILLs a random agent every
+# CHAOS_MIN to CHAOS_MAX seconds. It has no lane and no button in the UI: a kill
+# looks like any other crash, and the supervisor brings the agent back.
+CHAOS = os.environ.get("DESK_CHAOS", "0") == "1"
+CHAOS_AGENTS = [a.strip() for a in os.environ.get("DESK_CHAOS_AGENTS", "triage,resolver,billing").split(",")
+                if a.strip()]
+CHAOS_MIN = float(os.environ.get("DESK_CHAOS_MIN", "1"))
+CHAOS_MAX = float(os.environ.get("DESK_CHAOS_MAX", "10"))
+
+# ---------------------------------------------------------------- demo loop
+
+# DESK_DEMO=1 runs every scenario in turn, forever, for a booth or a screen in
+# the corner: approvals decide themselves after DEMO_APPROVE_DELAY seconds (the
+# desk's limit: approve up to it, decline over it), each ticket is followed by
+# DEMO_PAUSE seconds, and the demo data is reset at the start of every round.
+# It runs on DEMO_LLM (mock by default: no cost, same result every time), each
+# mock call taking DEMO_STEP seconds so the timeline fills at a pace people can follow.
+DEMO = os.environ.get("DESK_DEMO", "0") == "1"
+DEMO_LLM = os.environ.get("DESK_DEMO_LLM", "mock")
+DEMO_STEP = float(os.environ.get("DESK_DEMO_STEP", "0.8"))
+DEMO_PAUSE = float(os.environ.get("DESK_DEMO_PAUSE", "8"))
+DEMO_APPROVE_DELAY = float(os.environ.get("DESK_DEMO_APPROVE_DELAY", "3"))

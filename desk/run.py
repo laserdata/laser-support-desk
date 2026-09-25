@@ -21,6 +21,7 @@ import time
 
 from . import config as C
 from . import telemetry
+from .chaos import ChaosMonkey
 from .core import Desk, connect, setup
 from .llm import choose_llm
 from .supervisor import Supervisor
@@ -46,7 +47,11 @@ async def main() -> None:
     parser.add_argument("--scenario", default="duplicate", choices=sorted(C.SCENARIOS))
     parser.add_argument("--list", action="store_true", help="list the scenarios")
     parser.add_argument("--chat", action="store_true", help="type the customer message yourself")
+    parser.add_argument("--customer", choices=C.CUSTOMERS,
+                        help="who the ticket is from (default: the scenario's customer)")
     parser.add_argument("--no-crash", action="store_true", help="do not kill the resolver")
+    parser.add_argument("--chaos", action="store_true",
+                        help="let the chaos monkey kill random agents (see DESK_CHAOS_*)")
     parser.add_argument("--reset", action="store_true",
                         help="clean slate first: orders as configured, fresh customer history")
     parser.add_argument("--no-agents", action="store_true",
@@ -58,6 +63,8 @@ async def main() -> None:
             print(f"  {name:<14} {about}\n  {'':<14} \"{message}\"")
         return
     about, scripted, expect_status, expect_cents = C.SCENARIOS[args.scenario]
+    customer = args.customer or C.scenario_customer(args.scenario)
+    scripted_run = not args.chat and customer == C.scenario_customer(args.scenario)
 
     tracing = telemetry.init("support-desk-runner")
     laser = await connect()
@@ -66,6 +73,7 @@ async def main() -> None:
     print(f"  LLM: {desk.llm.name}   tracing: {'on' if tracing else 'off'}")
     if not args.chat:
         print(f"  scenario: {args.scenario} ({about})")
+    print(f"  customer: {customer}")
 
     phase("memory, read back from the log")
     kb, history = await (desk.reset_demo() if args.reset else desk.seed_memory())
@@ -96,7 +104,7 @@ async def main() -> None:
         if state == "exited" and ticket_box.get("t"):
             lane("supervisor", "restart", f"{name} pid {pid} died (exit {code}), starting a new one")
 
-    supervisor = None
+    supervisor = chaos = None
     if args.no_agents:
         phase("using the agents the web server is running: approve and kill from the UI")
     else:
@@ -104,6 +112,12 @@ async def main() -> None:
         env = {"DESK_POLICY_PAUSE": "0", "DESK_CRASH_ONCE": "0" if args.no_crash else "1"}
         supervisor = Supervisor(["triage", "resolver", "billing", "approver"], env, on_change)
         await supervisor.start()
+        if args.chaos or C.CHAOS:
+            async def on_kill(name, pid):
+                await desk.event(ticket_box.get("t", "-"), "killed", agent="supervisor", by="chaos",
+                                 text=f"chaos monkey killed {name} pid {pid} (SIGKILL)", target=name)
+            chaos = ChaosMonkey(supervisor, on_kill=on_kill)
+            chaos.start()
     try:
         deadline = time.monotonic() + 120
         while supervisor and len(ready) < 4:
@@ -123,8 +137,9 @@ async def main() -> None:
         phase(f"ticket {t[:12]}")
         with telemetry.span("ticket", ticket=t, scenario=args.scenario) as root:
             await session.append("instruction", text)
+            await desk.set_customer(t, customer)
             await desk.status(t, "open")
-            await desk.handoff(t, "triage", {"ticket": t, "customer": C.CUSTOMER, "text": text})
+            await desk.handoff(t, "triage", {"ticket": t, "customer": customer, "text": text})
             deadline = time.monotonic() + 900
             while True:
                 status = await desk.get_status(t)
@@ -173,7 +188,7 @@ async def main() -> None:
         phase("evals")
         await asyncio.sleep(0.5)
         result = await evaluate(desk, t, tail.by_ticket.get(t, []), text,
-                                None if args.chat else (expect_status, expect_cents))
+                                (expect_status, expect_cents) if scripted_run else None)
         for name, ok in result["checks"].items():
             print(f"  {'PASS' if ok else 'FAIL'}  {name}")
         judge = result["judge"]
@@ -185,6 +200,8 @@ async def main() -> None:
             endpoint = os.environ.get("DESK_JAEGER_UI", "http://localhost:16686")
             print(f"\n  trace: {endpoint}/trace/{trace}")
     finally:
+        if chaos:
+            chaos.stop()
         if supervisor:
             await supervisor.stop()
         tail_task.cancel()

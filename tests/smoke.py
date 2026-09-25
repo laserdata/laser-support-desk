@@ -25,22 +25,18 @@ async def run(scenario):
     handlers = {"triage": A.triage(desks["triage"]), "resolver": A.resolver(desks["resolver"]),
                 "billing": A.billing(desks["billing"])}
     handlers["human"] = A.approver(desks["approver"])  # approvals are messages now
-    dedup = A.billing_dedup(desks["billing"])
     about, text, status, cents = C.SCENARIOS[scenario]
+    customer = C.scenario_customer(scenario)
     s = runner.sessions.start(); t = s.conversation
-    await s.append("instruction", text); await runner.status(t, "open")
-    await runner.handoff(t, "triage", {"ticket": t, "customer": C.CUSTOMER, "text": text})
+    await s.append("instruction", text); await runner.set_customer(t, customer); await runner.status(t, "open")
+    await runner.handoff(t, "triage", {"ticket": t, "customer": customer, "text": text})
     while laser.sent:
         m = laser.sent.pop(0)
-        target = m.provenance.target_agent_id
-        if target == "billing" and m.idempotency_key and not await dedup("billing"+m.idempotency_key):
-            continue
-        await handlers[target](None, m)
-    # redeliver billing
+        await handlers[m.provenance.target_agent_id](None, m)
+    # redeliver billing: billing's ledger entry makes it a no-op
     if status == "refunded":
         await runner.handoff(t, "billing", {"ticket": t, "amount": cents}, key=f"refund-{t}")
-        m = laser.sent.pop(0)
-        if await dedup("billing"+m.idempotency_key): await handlers["billing"](None, m)
+        await handlers["billing"](None, laser.sent.pop(0))
     events = [e for e in laser.log["support.events"] if e["ticket"] == t]
     res = await evaluate(runner, t, events, text, (status, cents))
     print(scenario, "->", res["final"], {k: v for k, v in res["checks"].items()})
