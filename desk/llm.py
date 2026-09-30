@@ -1,6 +1,8 @@
-"""The LLM seam: claude -p by default, the Anthropic API if a key is set, or a mock.
+"""The LLM seam: a mock by default, or claude -p or the Anthropic API when asked.
 
-DESK_LLM=claude|api|mock forces one. Every answer is kept in `.last` so the
+DESK_LLM=mock|claude|api picks one; unset means mock, so the desk runs with no
+key and no external calls. claude falls back to the mock when it is not on PATH,
+api when ANTHROPIC_API_KEY is not set. Every answer is kept in `.last` so the
 lanes can show it."""
 
 from __future__ import annotations
@@ -76,14 +78,12 @@ class AnthropicLlm:
 
 def choose_llm():
     choice = os.environ.get("DESK_LLM", "").strip().lower()
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    cli = shutil.which("claude")
-    if choice == "mock":
-        return MockLlm()
-    if choice == "api" or (key and choice != "claude"):
+    if choice == "api":
+        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         return AnthropicLlm(key) if key else MockLlm()
-    if cli:
-        return ClaudeCliLlm(cli)
+    if choice == "claude":
+        cli = shutil.which("claude")
+        return ClaudeCliLlm(cli) if cli else MockLlm()
     return MockLlm()
 
 
