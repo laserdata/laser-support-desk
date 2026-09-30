@@ -23,7 +23,7 @@ Built on Laser SDK for Python, running on Laser Stack locally or LaserData Cloud
 
 ## Run it
 
-You need Python 3.11+, Docker, and `claude` (Claude Code) on your PATH, or an Anthropic API key.
+You need Python 3.11+ and Docker. The agents run on a mock LLM by default, so no API key is needed; see `DESK_LLM` under Settings to use a real one.
 
 **1. Start Laser Stack.** In a checkout of [laser-stack](https://github.com/laserdata/laser-stack):
 
@@ -104,7 +104,7 @@ Point `LASER_CONNECTION_STRING` at your deployment (`user:password@host` or `tok
 
 See `.env.example`. The ones you are most likely to change:
 
-- `DESK_LLM`: `claude` (the default when `claude` is on PATH, about 5 seconds a call), `api` (needs `ANTHROPIC_API_KEY`, faster), or `mock`.
+- `DESK_LLM`: `mock` (the default, no key and no external calls), `claude` (Claude Code on PATH, about 5 seconds a call), or `api` (needs `ANTHROPIC_API_KEY`, faster). Either real option falls back to `mock` if what it needs is missing.
 - `DESK_POLICY_PAUSE`: how long the resolver holds at its policy step so you can kill it mid-case. Default 0 (off); set it to 6 or so when presenting the kill.
 - `DESK_CHAOS=1`: a chaos monkey SIGKILLs a random agent every `DESK_CHAOS_MIN` to `DESK_CHAOS_MAX` seconds (default 1 to 10), picked from `DESK_CHAOS_AGENTS` (default `triage,resolver,billing`). It has no lane or control in the UI; its kills go on the log like a Kill click, against the newest open ticket, and the supervisor restarts the agent. `python -m desk.run --chaos` turns it on for a CLI run.
 - `DESK_DEMO=1`: the demo loop. `DESK_DEMO_PAUSE` (default 8) seconds between tickets, `DESK_DEMO_APPROVE_DELAY` (default 3) before an approval decides itself, `DESK_DEMO_STEP` (default 0.8) seconds per mock LLM call, `DESK_DEMO_LLM` (default `mock`) to run it on a real LLM instead.
