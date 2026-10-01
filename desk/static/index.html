@@ -713,7 +713,7 @@ function renderScore() {
   const checks = Object.entries(evalResult.checks || {});
   const passed = checks.filter(([, ok]) => ok).length;
   const j = evalResult.judge || {};
-  const csat = csatScore
+  const rating = csatScore
     ? `Rated as the customer: <b>${csatScore}/5</b> <span class="muted">(written to the log, averaged in Analytics)</span>`
     : `Rate as the customer: ${[1, 2, 3, 4, 5].map(n => `<button class="small" data-csat="${n}" title="${n} out of 5">${n}</button>`).join("")}
        <span class="muted">(1 poor, 5 great; the rating is written to the log and averaged in Analytics)</span>`;
@@ -721,7 +721,7 @@ function renderScore() {
     ${checks.length ? `<div class="headline ${passed === checks.length ? "pass" : "fail"}">Evals: ${passed}/${checks.length} checks passed</div>` : '<div class="headline">Evals</div>'}
     <ul>${checks.map(([k, ok]) => `<li class="${ok ? "pass" : "fail"}">${ok ? "✓" : "✗"} ${esc(k)}</li>`).join("")}</ul>
     <div>LLM judge: <b>${esc(j.score ?? "–")}/5</b> <span class="muted">${esc(j.reason || "")}</span></div>
-    <div class="stars">${csat}</div>`;
+    <div class="stars">${rating}</div>`;
   $("score").hidden = false;
   $("score").querySelectorAll("[data-csat]").forEach(b => b.onclick = () => csat(Number(b.dataset.csat)));
 }
