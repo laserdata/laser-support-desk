@@ -135,7 +135,13 @@ async def resolve(desk: Desk, body: dict) -> None:
         since = await session.turns_since(cp)
         await desk.event(t, "replay", text=f"from checkpoint, {len(since)} turn(s) since: "
                          + "; ".join(f"{turn.display} {turn.text()}" for turn in since))
-        await finish(desk, t, body)
+        # The order lookup is in the session: use its result, not a second lookup.
+        # Killed before the result was recorded, look it up after all.
+        results = [turn for turn in since if turn.display == "tool.result"]
+        if results:
+            await finish(desk, t, body, json.loads(results[-1].text()))
+        else:
+            await finish(desk, t, body, await desk.get_order(body.get("order")))
         return
     await desk.status(t, "resolving")
     turns = await session.context()
@@ -156,10 +162,10 @@ async def resolve(desk: Desk, body: dict) -> None:
         await asyncio.sleep(C.POLICY_PAUSE)
     else:
         await desk.event(t, "policy", text="checking refund policy")
-    await finish(desk, t, body)
+    await finish(desk, t, body, record)
 
 
-async def finish(desk: Desk, t: str, body: dict) -> None:
+async def finish(desk: Desk, t: str, body: dict, record) -> None:
     session = desk.session(t)
     for item in await session.memory().recall(limit=5):
         try:
@@ -172,7 +178,6 @@ async def finish(desk: Desk, t: str, body: dict) -> None:
                                               f"amount {facts.get('amount_cents')}")
             break
     customer = body.get("customer") or C.CUSTOMER
-    record = await desk.get_order(body.get("order"))
     if body.get("intent") != "refund":
         await answer(desk, t, customer, body, record)
         return
