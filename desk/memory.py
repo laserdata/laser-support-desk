@@ -32,7 +32,7 @@ async def main() -> None:
         print(f"    {note}")
     print("  knowledge base:")
     for item in await desk.kb_mem.recall(limit=1000):
-        print(f"    {item.text}")
+        print(f"    {item.text()}")
 
 
 if __name__ == "__main__":

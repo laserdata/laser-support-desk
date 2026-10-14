@@ -25,9 +25,10 @@ async def connect() -> ls.Laser:
 
 async def setup(laser: ls.Laser, *, with_index: bool) -> None:
     """Idempotent: topics, and (for the server and runner) the events index."""
-    await laser.bootstrap(C.PARTITIONS)
+    await laser.sessions().bootstrap(C.PARTITIONS, ls.TopicRetention.expire_after(C.SESSION_RETENTION_MS))
     await laser.topic(C.DESK_TOPIC).ensure(partitions=C.PARTITIONS)
     await laser.topic(C.EVENTS_TOPIC).ensure(partitions=C.PARTITIONS)
+    await laser.topic(C.HUMAN_TOPIC).ensure(partitions=1)
     if with_index:
         await start_projector(laser)
 
@@ -35,12 +36,12 @@ async def setup(laser: ls.Laser, *, with_index: bool) -> None:
 async def start_projector(laser: ls.Laser) -> None:
     pid = f"{C.EVENTS_INDEX}.v1"
     try:
-        await laser.register_projection({
+        await laser.projections().register({
             "id": pid, "name": C.EVENTS_INDEX, "version": 1, "content_type": "json",
             "extraction": {"fields": [{"name": f, "pointer": f"/{f}"} for f in INDEX_FIELDS],
                            "inline_payload": False},
             "inline_payload_default": False})
-        await laser.apply_binding({
+        await laser.bindings().apply({
             "source": {"stream": laser.default_stream, "topic": C.EVENTS_TOPIC},
             "allowed_projections": [pid], "default_projection": pid,
             "notify": True, "index": C.EVENTS_INDEX})
@@ -120,7 +121,7 @@ async def cas_update(kv, key: str, change):
     value, or None to leave it as it is. Returns the value as it now stands."""
     while True:
         entry = await kv.get_entry(key)
-        current = entry.json() if entry is not None else None
+        current = entry.decode_value() if entry is not None else None
         new = change(current)
         if new is None:
             return current
@@ -141,13 +142,19 @@ def auto_decision(text: str) -> str:
     return "approved" if value <= C.APPROVAL_LIMIT_CENTS else "declined"
 
 
+def readable(turns) -> list:
+    """The turns worth showing a model or a person: not the session's own
+    lifecycle records."""
+    return [turn for turn in turns if not turn.display.startswith("session")]
+
+
 def is_addressed(message, agent: str):
     """All three agents read the one log; each acts only on what is routed to it."""
     if message.provenance.target_agent_id != agent:
         return None
     try:
-        payload = message.json()
-    except ls.CodecError:
+        payload = json.loads(bytes(message.body()))
+    except ValueError:
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -167,13 +174,31 @@ class Desk:
         self.orders = laser.kv(C.NS_ORDERS)
         self.meta = laser.kv(C.NS_META)
         # Durable memory: named sessions, so the same name reaches the same
-        # conversation from any process, run after run. Only conversation-scoped
-        # memory reads back on Laser SDK 0.4.0 (see memory_probe.py).
-        self.kb_mem = self.sessions.create(C.KB_SCOPE).memory()
+        # conversation from any process, run after run.
+        self.kb_mem = self.named(C.KB_SCOPE).memory()
         self._kb_index = None
         # Customer history, embedded once per note per process (see history_recall),
         # one index per customer: (index, notes seen, epoch).
         self._history: dict[str, tuple] = {}
+
+    # ---- the ticket's session
+    async def open_ticket(self) -> str:
+        """Start the session for a new ticket; its id is the ticket id. Every
+        agent then writes into it as itself."""
+        session, lease = await self.sessions.start().agent(self.agent).begin()
+        lease.release()
+        return session.conversation
+
+    def session(self, t: str):
+        return self.sessions.open(t).as_agent(self.agent)
+
+    def named(self, label: str):
+        return self.sessions.open(self.sessions.create(label).id())
+
+    async def say(self, t: str, kind: str, text: str) -> None:
+        """Record a turn on the ticket's session."""
+        await self.session(t).append(ls.event_envelope(
+            ls.new_conversation_id(), t, self.agent, text.encode(), operation=kind))
 
     # ---- the log
     async def event(self, t: str, step: str, agent: str | None = None, **extra) -> None:
@@ -182,7 +207,7 @@ class Desk:
         await self.laser.topic(C.EVENTS_TOPIC).publish().json(record).send()
 
     async def status(self, t: str, value: str) -> None:
-        await self.state.set(t).payload(value).send()
+        await self.state.set(t).bytes(value).send()
         await self.event(t, "status", agent="desk", status=value)
 
     async def get_status(self, t: str) -> str | None:
@@ -190,7 +215,7 @@ class Desk:
         return bytes(raw).decode() if raw is not None else None
 
     async def set_customer(self, t: str, customer: str) -> None:
-        await self.state.set(f"{t}:customer").payload(customer).send()
+        await self.state.set(f"{t}:customer").bytes(customer).send()
 
     async def get_customer(self, t: str) -> str:
         raw = await self.state.get(f"{t}:customer")
@@ -213,7 +238,7 @@ class Desk:
             return record
         seed = C.ORDERS.get(str(order))
         if seed is not None:
-            await self.orders.set(str(order)).payload(json.dumps(seed)).send()
+            await self.orders.set(str(order)).bytes(json.dumps(seed)).send()
         return json.loads(json.dumps(seed)) if seed is not None else None
 
     async def record_refund(self, order, amount: int, key: str) -> None:
@@ -241,7 +266,7 @@ class Desk:
 
     async def refunded(self, customer: str) -> int:
         entry = await self.accounts.get_entry(customer)
-        return self._account(entry.json() if entry is not None else None)["cents"]
+        return self._account(entry.decode_value() if entry is not None else None)["cents"]
 
     async def add_refund(self, customer: str, amount: int, key: str) -> int:
         """Add to the customer's total, once per key. Compare-and-swap, so two
@@ -257,7 +282,7 @@ class Desk:
         """Put orders back to config.ORDERS: those named in `text`, or all of them."""
         ids = [o for o in C.ORDERS if text is None or o in text]
         for order in ids:
-            await self.orders.set(order).payload(json.dumps(C.ORDERS[order])).send()
+            await self.orders.set(order).bytes(json.dumps(C.ORDERS[order])).send()
         return ids
 
     async def reset_demo(self) -> tuple[int, int]:
@@ -274,9 +299,9 @@ class Desk:
         # session's conversation: the default namespace is agent.session.
         store = self.laser.memory("agent.session")
         epoch = await self.epoch()
-        targets = [self.sessions.create(self._history_name(c, epoch)).conversation for c in C.CUSTOMERS]
+        targets = [self.named(self._history_name(c, epoch)).conversation for c in C.CUSTOMERS]
         if kb:
-            targets.append(self.sessions.create(C.KB_SCOPE).conversation)
+            targets.append(self.named(C.KB_SCOPE).conversation)
         removed = 0
         for conversation in targets:
             for item in await store.recall(limit=2000, conversation=conversation):
@@ -286,7 +311,7 @@ class Desk:
         for conversation in targets:
             left += len(await store.recall(limit=10, conversation=conversation))
         if left:
-            await self.meta.set("epoch").payload(str(await self.epoch() + 1)).send()
+            await self.meta.set("epoch").bytes(str(await self.epoch() + 1)).send()
         self._kb_index = None
         self._history = {}
         return {"forgotten": removed, "still_recalled": left, "new_epoch": bool(left)}
@@ -302,7 +327,7 @@ class Desk:
         return scope if epoch == 0 else f"{scope}-e{epoch}"
 
     async def history_mem(self, customer: str):
-        return self.sessions.create(self._history_name(customer, await self.epoch())).memory()
+        return self.named(self._history_name(customer, await self.epoch())).memory()
 
     async def seed_memory(self) -> tuple[int, int]:
         """Knowledge base notes, and customer history notes across all customers."""
@@ -310,7 +335,7 @@ class Desk:
         stores = [(self.kb_mem, C.KB_NOTES)] + [
             (await self.history_mem(c), C.HISTORY_NOTES[c]) for c in C.CUSTOMERS]
         for mem, seed in stores:
-            have = {item.text for item in await mem.recall(limit=500)}
+            have = {item.text() for item in await mem.recall(limit=500)}
             missing = [note for note in seed if note not in have]
             for note in missing:
                 await mem.remember(note)
@@ -319,30 +344,30 @@ class Desk:
 
     async def kb_recall(self, query: str, limit: int = 3) -> list[str]:
         if self._kb_index is None:
-            self._kb_index = self.laser.vector_memory(embed)
-            notes = {item.text for item in await self.kb_mem.recall(limit=500)} or set(C.KB_NOTES)
+            self._kb_index = ls.VectorMemory.vector(embed)
+            notes = {item.text() for item in await self.kb_mem.recall(limit=500)} or set(C.KB_NOTES)
             for note in notes:
                 await self._kb_index.remember(note)
-        return [m.text for m in await self._kb_index.recall(semantic=query, limit=limit)]
+        return [m.text() for m in await self._kb_index.recall(semantic=query, limit=limit)]
 
     async def history_recall(self, customer: str, query: str, limit: int = 3) -> list[str]:
         # Another process may have written notes since the last call, so read the
         # durable memory each time, but only embed the notes this index has not
         # seen. A cleared memory (or a new epoch) rebuilds it.
         epoch = await self.epoch()
-        notes = [item.text for item in await (await self.history_mem(customer)).recall(limit=500)]
+        notes = [item.text() for item in await (await self.history_mem(customer)).recall(limit=500)]
         index, seen, built = self._history.get(customer, (None, set(), None))
         if index is None or built != epoch or not seen <= set(notes):
-            index, seen = self.laser.vector_memory(embed), set()
+            index, seen = ls.VectorMemory.vector(embed), set()
             self._history[customer] = (index, seen, epoch)
         for note in notes:
             if note not in seen:
                 seen.add(note)
                 await index.remember(note)
-        return [m.text for m in await index.recall(semantic=query, limit=limit)]
+        return [m.text() for m in await index.recall(semantic=query, limit=limit)]
 
     async def history_recent(self, customer: str, n: int = 3) -> list[str]:
-        items = [item.text for item in await (await self.history_mem(customer)).recall(limit=500)]
+        items = [item.text() for item in await (await self.history_mem(customer)).recall(limit=500)]
         return items[-n:]  # recall returns oldest first
 
     async def learn(self, customer: str, note: str) -> None:

@@ -1,8 +1,0 @@
-# Copy into your laser-stack checkout as compose.override.yaml before ./scripts/up.
-# Docker Desktop's VM has no NUMA topology, so the bundled Iggy server cannot
-# bind shard memory per NUMA node and crash-loops (apache/iggy#4242). This
-# tells it to use all CPUs without NUMA binding.
-services:
-  iggy:
-    environment:
-      IGGY_SHARDING_CPU_ALLOCATION: "all"

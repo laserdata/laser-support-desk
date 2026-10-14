@@ -27,8 +27,8 @@ async def run(scenario):
     handlers["human"] = A.approver(desks["approver"])  # approvals are messages now
     about, text, status, cents = C.SCENARIOS[scenario]
     customer = C.scenario_customer(scenario)
-    s = runner.sessions.start(); t = s.conversation
-    await s.append("instruction", text); await runner.set_customer(t, customer); await runner.status(t, "open")
+    t = await runner.open_ticket()
+    await runner.say(t, "instruction", text); await runner.set_customer(t, customer); await runner.status(t, "open")
     await runner.handoff(t, "triage", {"ticket": t, "customer": customer, "text": text})
     while laser.sent:
         m = laser.sent.pop(0)
@@ -57,7 +57,7 @@ async def crash_and_resume():
     A.C.CRASH_ONCE = True
     A.os.kill = fake_kill
     laser = ls.Laser(); d = Desk(laser, "resolver", choose_llm()); tri = Desk(laser, "triage", choose_llm())
-    s = d.sessions.start(); t = s.conversation
+    t = await d.open_ticket()
     text = C.SCENARIOS["duplicate"][1]
     await tri.handoff(t, "triage", {"ticket": t, "text": text})
     await A.triage(tri)(None, laser.sent.pop(0))

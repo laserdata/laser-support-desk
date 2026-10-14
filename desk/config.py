@@ -7,10 +7,11 @@ import os
 # ---------------------------------------------------------------- connection
 
 def connection_string() -> str:
-    """LASER_CONNECTION_STRING as printed by Laser Stack's ./scripts/up, or a
-    LaserData Cloud target (user:pwd@host or token@host). TLS for Cloud hosts is
+    """LASER_CONNECTION_STRING for a Laser Stack or a LaserData Cloud target
+    (user:pwd@host or token@host). Unset, it is the Laser Stack that
+    `docker compose up -d` starts from this repo. TLS for Cloud hosts is
     handled by the SDK."""
-    raw = os.environ.get("LASER_CONNECTION_STRING", "").strip() or "iggy:iggy@127.0.0.1:8090"
+    raw = os.environ.get("LASER_CONNECTION_STRING", "").strip() or "iggy:laser@127.0.0.1:8090"
     if "://" not in raw:
         raw = f"iggy+tcp://{raw}"
     host = raw.split("@")[-1].split("/")[0]
@@ -24,6 +25,8 @@ PARTITIONS = 4
 
 DESK_TOPIC = "support.desk"        # the one log the three agents share
 EVENTS_TOPIC = "support.events"    # every step, read by the UI, analytics and evals
+HUMAN_TOPIC = "support.approvals"  # approval requests, answered by a person (or the auto-approver)
+SESSION_RETENTION_MS = 7 * 24 * 3600 * 1000  # how long agent.sessions keeps ticket sessions
 EVENTS_INDEX = os.environ.get("DESK_EVENTS_INDEX", "support_events")
 
 # KV namespaces

@@ -83,7 +83,7 @@ class App:
         if C.CHAOS:
             self.chaos.start()
         # The human in the loop: approval requests land here and wait for a click.
-        self.human = self.laser.spawn_agent("human", ls.Topics.HUMAN_INPUT, self.on_approval,
+        self.human = self.laser.spawn_agent("human", C.HUMAN_TOPIC, self.on_approval,
                                             poll_interval_ms=20)
         await self.human.ready()
         if C.DEMO:
@@ -149,7 +149,7 @@ class App:
     # saved in KV and brought back on start, so a restart loses none.
     async def save_approvals(self) -> None:
         saved = {rid: {"approval": p["approval"], "ticket": p.get("ticket")} for rid, p in self.pending.items()}
-        await self.desk.meta.set("approvals").payload(json.dumps(saved)).send()
+        await self.desk.meta.set("approvals").bytes(json.dumps(saved)).send()
 
     async def restore_approvals(self) -> set[str]:
         raw = await self.desk.meta.get("approvals")
@@ -168,12 +168,12 @@ class App:
         return {p["approval"]["ticket"] for p in self.pending.values()}
 
     async def on_approval(self, ctx, message) -> None:
-        request_id = message.message_id
-        raw = bytes(message.payload).decode("utf-8", "replace")
+        request_id = f"{message.id.partition_id}-{message.id.offset}"
+        raw = bytes(message.body()).decode("utf-8", "replace")
         try:
             asked = json.loads(raw)
         except ValueError:
-            asked = {"ticket": message.conversation_id, "text": raw}
+            asked = {"ticket": message.provenance.conversation_id, "text": raw}
         approval = {"type": "approval", "id": request_id, "ticket": asked.get("ticket"),
                     "text": asked.get("text", raw)}
         # One open approval per ticket: a re-ask (after a resolver restart) replaces it.
@@ -250,8 +250,7 @@ class App:
         if expect:
             # A scripted scenario starts from its configured order, whatever earlier runs did.
             await self.desk.reset_orders(text)
-        session = self.desk.sessions.start()
-        t = session.conversation
+        t = await self.desk.open_ticket()
         root = telemetry.start_root("ticket", ticket=t, scenario=scenario or "chat")
         self.tickets[t] = {"text": text, "expect": expect, "customer": customer, "root": root,
                            "done": asyncio.Event()}
@@ -260,7 +259,7 @@ class App:
         if demo:
             # Before the first event, so every open page follows this ticket from its start.
             await self.broadcast({"type": "ticket", "demo": True, **opened})
-        await session.append("instruction", text)
+        await self.desk.say(t, "instruction", text)
         await self.desk.set_customer(t, customer)
         await self.desk.status(t, "open")
         await self.desk.handoff(t, "triage", {"ticket": t, "customer": customer, "text": text,

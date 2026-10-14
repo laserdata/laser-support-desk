@@ -1,6 +1,80 @@
-# Jaeger for the traces (UI on http://localhost:16686, OTLP/HTTP on 4318).
-# Laser Stack itself runs from its own checkout; see README.md.
+# Everything the desk connects to, for a local run:
+#   iggy, plane   Laser Stack, from its published images (https://github.com/laserdata/laser-stack)
+#   jaeger        the traces (UI on http://localhost:16686, OTLP/HTTP on 4318)
+#
+# The desk connects with LASER_CONNECTION_STRING=iggy:laser@127.0.0.1:8090.
+# Ports are bound to 127.0.0.1 only, and the credentials below are for local
+# use. Set LASER_IGGY_PASSWORD and LASER_PLANE_INTERNAL_API_TOKEN to change them.
+name: laser-support-desk
+
 services:
+  iggy:
+    image: ${LASER_IGGY_IMAGE:-docker.io/laserdatainc/iggy-server:latest}
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - SYS_NICE
+    environment:
+      IGGY_ROOT_USERNAME: iggy
+      IGGY_ROOT_PASSWORD: ${LASER_IGGY_PASSWORD:-laser}
+      IGGY_TCP_ADDRESS: 0.0.0.0:8090
+      IGGY_NODE_ADVERTISED_ADDRESS: iggy
+      IGGY_HTTP_ADDRESS: 0.0.0.0:3000
+      IGGY_QUIC_ENABLED: "false"
+      IGGY_WEBSOCKET_ENABLED: "false"
+      IGGY_PLANE_ENABLED: "true"
+      IGGY_PLANE_SOCKET_PATH: /run/laserdata/plane.sock
+      IGGY_PLANE_REQUEST_TIMEOUT: 15s
+      IGGY_PATH: /var/lib/iggy
+      # Docker Desktop's VM has no NUMA topology, so the server must not bind
+      # shard memory per NUMA node (apache/iggy#4242).
+      IGGY_SHARDING_CPU_ALLOCATION: "all"
+    ports:
+      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - iggy-data:/var/lib/iggy
+      - plane-run:/run/laserdata
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/iggy-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    stop_grace_period: 30s
+
+  plane:
+    image: ${LASER_PLANE_IMAGE:-docker.io/laserdatainc/laser-plane:latest}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - iggy
+    environment:
+      LD_PLANE_IGGY_URL: tcp://iggy:8090
+      LD_PLANE_IGGY_HTTP_URL: http://iggy:3000
+      LD_PLANE_IGGY_USERNAME: iggy
+      LD_PLANE_IGGY_PASSWORD: ${LASER_IGGY_PASSWORD:-laser}
+      LD_PLANE_IGGY_TLS_DISABLED: "true"
+      LD_PLANE_CLUSTER_KIND: standalone
+      LD_PLANE_QUERY_SOCKET: /run/laserdata/plane.sock
+      LD_PLANE_DB_PATH: /var/lib/laser-plane/index.db
+      LD_PLANE_HEALTH_ADDR: 127.0.0.1:8089
+      LD_PLANE_INTERNAL_API_TOKEN: ${LASER_PLANE_INTERNAL_API_TOKEN:-local-support-desk}
+    volumes:
+      - plane-data:/var/lib/laser-plane
+      - plane-run:/run/laserdata
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/plane-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    stop_grace_period: 30s
+
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     environment:
@@ -8,3 +82,8 @@ services:
     ports:
       - "16686:16686"
       - "4318:4318"
+
+volumes:
+  iggy-data:
+  plane-data:
+  plane-run:

@@ -25,29 +25,23 @@ Built on Laser SDK for Python, running on Laser Stack locally or LaserData Cloud
 
 You need Python 3.11+ and Docker. The agents run on a mock LLM by default, so no API key is needed; see `DESK_LLM` under Settings to use a real one.
 
-**1. Start Laser Stack.** In a checkout of [laser-stack](https://github.com/laserdata/laser-stack):
-
-```
-cp /path/to/laser-support-desk/deploy/laser-stack.compose.override.yaml compose.override.yaml
-./scripts/up
-```
-
-The override is only needed on Docker Desktop (the Iggy server otherwise crash-loops binding memory to NUMA nodes the VM does not have). `./scripts/up` prints a `LASER_CONNECTION_STRING`.
-
-**2. Start Jaeger** (optional, for traces), from this directory:
+**1. Start Laser Stack and Jaeger**, from this directory:
 
 ```
 docker compose up -d
 ```
 
-**3. Install and run:**
+This starts the Iggy server and the Laser plane from the published [Laser Stack](https://github.com/laserdata/laser-stack) images, plus Jaeger for the traces. `docker compose ps` shows `iggy` and `plane` as healthy when they are ready.
+
+**2. Install and run:**
 
 ```
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
-export LASER_CONNECTION_STRING='iggy:laser@127.0.0.1:8090'
 python -m desk.server
 ```
+
+The desk connects to the local Laser Stack by default. To use LaserData Cloud or a Laser Stack you already run, set `LASER_CONNECTION_STRING` (see `.env.example`) and start only Jaeger with `docker compose up -d jaeger`.
 
 Open http://localhost:8000. Pick a scenario (or pick a customer and type your own message) and send it. While the resolver holds at its policy step (start the server with `DESK_POLICY_PAUSE=8` for time to do it), click **Kill** on the resolver's lane. Approve or decline the refund when it asks. When the ticket closes, rate it; the rating lands on the log and in the CSAT average.
 
@@ -130,6 +124,5 @@ logs/               each agent's output
 
 ## Known limits
 
-- Laser SDK 0.4.0: memory reads back only when scoped to a conversation. `memory_topic`, `memory_on_topic` and agent-scoped memory accept writes but never return them (`memory_probe.py` in the prototype shows it). So durable memory here is named sessions.
 - Semantic recall embeds locally with fastembed (`BAAI/bge-small-en-v1.5`, about 64 MB, downloaded to `~/.cache/fastembed` on first run, offline after). Laser SDK takes the embedder as a function and does not bring a model. `DESK_EMBEDDER=toy`, or fastembed missing, falls back to a bag-of-words embedder that matches shared words only; the smoke tests use it so they need no model.
 - Python has no OTEL package in Laser SDK yet, so tracing is hand-rolled with the OpenTelemetry SDK.

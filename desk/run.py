@@ -131,12 +131,11 @@ async def main() -> None:
         text = (input("  customer> ").strip() if args.chat else "") or scripted
         if not args.chat:
             await desk.reset_orders(text)  # the scenario starts from its configured order
-        session = desk.sessions.start()
-        t = session.conversation
+        t = await desk.open_ticket()
         ticket_box["t"] = t
         phase(f"ticket {t[:12]}")
         with telemetry.span("ticket", ticket=t, scenario=args.scenario) as root:
-            await session.append("instruction", text)
+            await desk.say(t, "instruction", text)
             await desk.set_customer(t, customer)
             await desk.status(t, "open")
             await desk.handoff(t, "triage", {"ticket": t, "customer": customer, "text": text})

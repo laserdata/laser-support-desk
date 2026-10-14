@@ -9,7 +9,7 @@ import json
 import laser_sdk as ls
 
 from . import config as C
-from .core import Desk
+from .core import Desk, readable
 
 
 class EventTail:
@@ -69,10 +69,10 @@ async def readers(desk: Desk, t: str) -> dict:
     customer = await desk.get_customer(t)
     out: dict = {"customer": customer}
     out["memory"] = await desk.history_recent(customer, 4)
-    facts = [item.text for item in await session.memory().recall(limit=3)]
+    facts = [item.text() for item in await session.memory().recall(limit=3)]
     out["session_memory"] = facts[-1] if facts else None
     turns = await session.context()
-    out["context"] = [{"kind": turn.kind, "text": turn.text()} for turn in turns]
+    out["context"] = [{"kind": turn.display, "text": turn.text()} for turn in readable(turns)]
     out["state"] = await desk.get_status(t)
     out["analytics"] = await analytics(desk.laser, t)
     return out
