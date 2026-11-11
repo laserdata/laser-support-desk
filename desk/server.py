@@ -83,8 +83,7 @@ class App:
         if C.CHAOS:
             self.chaos.start()
         # The human in the loop: approval requests land here and wait for a click.
-        self.human = self.laser.spawn_agent("human", C.HUMAN_TOPIC, self.on_approval,
-                                            poll_interval_ms=20)
+        self.human = self.laser.spawn_agent("human", C.HUMAN_TOPIC, self.on_approval)
         await self.human.ready()
         if C.DEMO:
             self.demo.start()

@@ -423,12 +423,10 @@ async def main(name: str) -> None:
         print(f"  semantic recall: {embedder_name()}", flush=True)
     if name == "approver":
         # It stands in for the human, so it reads what is addressed to "human".
-        handle = laser.spawn_agent("human", C.HUMAN_TOPIC, guarded(desk, name, approver(desk)),
-                                   poll_interval_ms=20)
+        handle = laser.spawn_agent("human", C.HUMAN_TOPIC, guarded(desk, name, approver(desk)))
     else:
         make = {"triage": triage, "resolver": resolver, "billing": billing}[name]
-        handle = laser.spawn_agent(name, C.DESK_TOPIC, guarded(desk, name, make(desk)),
-                                   poll_interval_ms=20)
+        handle = laser.spawn_agent(name, C.DESK_TOPIC, guarded(desk, name, make(desk)))
     await handle.ready()
     await desk.event("-", "ready", text=llm.name if llm else "auto-approve")
 
